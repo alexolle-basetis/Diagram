@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    @apply m-0 bg-slate-950 text-slate-200 antialiased;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+
+  #root {
+    @apply h-screen w-screen overflow-hidden;
+  }
+}
+
+@layer components {
+  .input-field {
+    @apply w-full bg-slate-800 text-slate-200 text-sm border border-slate-700 rounded-md px-2.5 py-2 outline-none transition-colors;
+  }
+  .input-field:focus {
+    @apply border-violet-500 ring-1 ring-violet-500/30;
+  }
+  .input-field::placeholder {
+    @apply text-slate-600;
+  }
+}
