@@ -1,11 +1,12 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import {
   X, Monitor, Globe, ArrowRight, Plus, Trash2, Copy, Check,
-  AlertCircle, Upload, ImageIcon,
+  AlertCircle, Upload, ImageIcon, Pencil, Eye,
 } from "lucide-react";
 import { useDiagramStore } from "../store/useDiagramStore";
 import { generateCurl } from "../utils/exportUtils";
 import { compressImage } from "../utils/imageUtils";
+import { Markdown } from "./Markdown";
 import type { ScreenStatus, ScreenColor } from "../types/diagram";
 import { STATUS_COLORS, SCREEN_COLORS } from "../utils/layoutEngine";
 
@@ -134,14 +135,13 @@ function ScreenEditor({ screenId }: { screenId: string }) {
       </Field>
 
       {/* Description */}
-      <Field label="Descripción">
-        <textarea
-          value={screen.description}
-          onChange={(e) => updateScreen(screenId, { description: e.target.value })}
-          rows={2}
-          className="input-field resize-none"
-        />
-      </Field>
+      <MarkdownField
+        label="Descripción"
+        value={screen.description}
+        onChange={(v) => updateScreen(screenId, { description: v })}
+        placeholder="Descripción de la pantalla..."
+        rows={2}
+      />
 
       {/* Status */}
       <Field label="Estado">
@@ -174,15 +174,13 @@ function ScreenEditor({ screenId }: { screenId: string }) {
       </Field>
 
       {/* Docs */}
-      <Field label="Documentación">
-        <textarea
-          value={screen.docs ?? ""}
-          onChange={(e) => updateScreen(screenId, { docs: e.target.value })}
-          rows={4}
-          className="input-field resize-y font-mono text-xs"
-          placeholder="Markdown o notas técnicas..."
-        />
-      </Field>
+      <MarkdownField
+        label="Documentación"
+        value={screen.docs ?? ""}
+        onChange={(v) => updateScreen(screenId, { docs: v })}
+        placeholder="Soporta **Markdown**: títulos, listas, código..."
+        rows={6}
+      />
 
       {/* Color */}
       <Field label="Color">
@@ -358,15 +356,13 @@ function EdgeEditor({
       </div>
 
       {/* Note */}
-      <Field label="Nota / Comentario">
-        <textarea
-          value={action.note ?? ""}
-          onChange={(e) => updateAction(sourceScreenId, actionId, { note: e.target.value || undefined })}
-          rows={2}
-          className="input-field resize-y text-xs text-sky-300"
-          placeholder="Explica la transición, condiciones, notas técnicas..."
-        />
-      </Field>
+      <MarkdownField
+        label="Nota / Comentario"
+        value={action.note ?? ""}
+        onChange={(v) => updateAction(sourceScreenId, actionId, { note: v || undefined })}
+        placeholder="Soporta **Markdown**: explica la transición..."
+        rows={3}
+      />
 
       {!apiCall ? (
         <button
@@ -549,6 +545,57 @@ function ImageUploader({
               <ImageIcon className="w-3 h-3" /> Embebida
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Markdown field with edit/preview toggle ──────────────────────────
+function MarkdownField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  rows = 4,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  rows?: number;
+}) {
+  const [editing, setEditing] = useState(!value);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</h3>
+        {value && (
+          <button
+            onClick={() => setEditing(!editing)}
+            className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            {editing ? <Eye className="w-3 h-3" /> : <Pencil className="w-3 h-3" />}
+            {editing ? "Preview" : "Editar"}
+          </button>
+        )}
+      </div>
+      {editing ? (
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          rows={rows}
+          className="input-field resize-y font-mono text-xs"
+          placeholder={placeholder}
+          onBlur={() => { if (value) setEditing(false); }}
+        />
+      ) : (
+        <div
+          onClick={() => setEditing(true)}
+          className="bg-slate-800 rounded-md p-3 border border-slate-700 cursor-text hover:border-slate-600 transition-colors min-h-[40px]"
+        >
+          <Markdown>{value}</Markdown>
         </div>
       )}
     </div>
