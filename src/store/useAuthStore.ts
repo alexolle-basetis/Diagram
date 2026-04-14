@@ -30,14 +30,14 @@ export const useAuthStore = create<AuthStore>((set) => ({
   signInWithGoogle: async () => {
     await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: window.location.origin + window.location.pathname },
+      options: { redirectTo: window.location.origin + window.location.pathname + window.location.search },
     });
   },
 
   signInWithGithub: async () => {
     await supabase.auth.signInWithOAuth({
       provider: "github",
-      options: { redirectTo: window.location.origin + window.location.pathname },
+      options: { redirectTo: window.location.origin + window.location.pathname + window.location.search },
     });
   },
 
