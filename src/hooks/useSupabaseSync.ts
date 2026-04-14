@@ -26,7 +26,7 @@ export function useSupabaseSync(
     let cancelled = false;
 
     loadDiagram(diagramId)
-      .then(({ diagram, positions, updatedAt }) => {
+      .then(({ diagram, positions, name, updatedAt }) => {
         if (cancelled) return;
         const store = useDiagramStore.getState();
         // Load without pushing undo history
@@ -35,6 +35,8 @@ export function useSupabaseSync(
         Object.entries(positions).forEach(([id, pos]) => {
           store.updateNodePosition(id, pos);
         });
+        // Set the diagram name in the store
+        store.setCloudDiagramName(name);
         lastSavedAt.current = updatedAt;
         onSaveStatusChange("saved");
         onLoaded();

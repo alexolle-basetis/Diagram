@@ -1,7 +1,7 @@
 import {
   Plus, Undo2, Redo2, Download, Upload, Image, PanelLeftClose, PanelLeftOpen,
   Search, AlertTriangle, CheckCircle2, Tag, Share2, Check, ArrowLeft,
-  Cloud, CloudOff, Loader2, LogOut, Wifi, LayoutGrid,
+  Cloud, CloudOff, Loader2, LogOut, Wifi, LayoutGrid, Sparkles,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { useDiagramStore } from "../store/useDiagramStore";
@@ -10,10 +10,11 @@ import { downloadJson, exportCanvasAsPng } from "../utils/exportUtils";
 import { buildShareUrl } from "../utils/urlShare";
 import { renameDiagram } from "../lib/diagramService";
 import { isSupabaseConfigured } from "../lib/supabase";
+import { ShareDialog } from "./ShareDialog";
 
 const isCloud = isSupabaseConfigured && window.location.hash !== "#local";
 
-export function Toolbar() {
+export function Toolbar({ showAiPanel, onToggleAiPanel }: { showAiPanel: boolean; onToggleAiPanel: () => void }) {
   const showJsonPanel = useDiagramStore((s) => s.showJsonPanel);
   const toggleJsonPanel = useDiagramStore((s) => s.toggleJsonPanel);
   const diagram = useDiagramStore((s) => s.diagram);
@@ -40,6 +41,7 @@ export function Toolbar() {
 
   const fileRef = useRef<HTMLInputElement>(null);
   const [shared, setShared] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
 
   const progress = getProgress();
   const tags = getAllTags();
@@ -136,17 +138,33 @@ export function Toolbar() {
       <ToolbarButton icon={<Upload className="w-4 h-4" />} tooltip="Importar JSON" onClick={() => fileRef.current?.click()} />
       <ToolbarButton icon={<Download className="w-4 h-4" />} tooltip="Exportar JSON" onClick={() => downloadJson(diagram)} />
       <ToolbarButton icon={<Image className="w-4 h-4" />} tooltip="Exportar PNG" onClick={handleExportPng} />
-      <ToolbarButton
-        icon={shared ? <Check className="w-4 h-4 text-emerald-400" /> : <Share2 className="w-4 h-4" />}
-        label={shared ? "¡Copiada!" : "Compartir"}
-        onClick={handleShare}
-      />
+      {isCloud && cloudDiagramId ? (
+        <ToolbarButton
+          icon={<Share2 className="w-4 h-4" />}
+          label="Compartir"
+          onClick={() => setShareDialogOpen(true)}
+        />
+      ) : (
+        <ToolbarButton
+          icon={shared ? <Check className="w-4 h-4 text-emerald-400" /> : <Share2 className="w-4 h-4" />}
+          label={shared ? "¡Copiada!" : "Compartir"}
+          onClick={handleShare}
+        />
+      )}
       <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={handleImport} />
 
       <Separator />
 
       {/* Search */}
       <ToolbarButton icon={<Search className="w-4 h-4" />} tooltip="Buscar (Ctrl+K)" onClick={() => setSearchOpen(true)} />
+
+      {/* AI Panel */}
+      <ToolbarButton
+        icon={<Sparkles className={`w-4 h-4 ${showAiPanel ? "text-violet-400" : ""}`} />}
+        label="AI"
+        tooltip="Gemini AI"
+        onClick={onToggleAiPanel}
+      />
 
       {/* Tag filter */}
       {tags.length > 0 && (
@@ -226,6 +244,10 @@ export function Toolbar() {
             </button>
           </div>
         </>
+      )}
+
+      {shareDialogOpen && (
+        <ShareDialog open={shareDialogOpen} onClose={() => setShareDialogOpen(false)} />
       )}
     </div>
   );

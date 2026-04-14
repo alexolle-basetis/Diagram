@@ -19,6 +19,24 @@ export interface DiagramRow {
   data: unknown;
   positions: unknown;
   owner_id: string;
+  is_public: boolean;
   updated_at: string;
   created_at: string;
+}
+
+export interface DiagramShareRow {
+  id: string;
+  diagram_id: string;
+  shared_with: string;
+  role: "viewer" | "editor";
+  created_at: string;
+}
+
+export interface SharedUserInfo {
+  id: string;
+  email: string;
+  full_name: string | null;
+  avatar_url: string | null;
+  role: "viewer" | "editor";
+  share_id: string;
 }

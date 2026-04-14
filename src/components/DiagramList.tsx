@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Plus, FileText, Trash2, LogOut, GitBranch, Clock } from "lucide-react";
+import { Plus, FileText, Trash2, LogOut, GitBranch, Clock, Users } from "lucide-react";
 import { useAuthStore } from "../store/useAuthStore";
 import {
   listMyDiagrams,
@@ -7,6 +7,7 @@ import {
   deleteDiagram,
   type DiagramSummary,
 } from "../lib/diagramService";
+import { listSharedWithMe, type SharedDiagramSummary } from "../lib/sharingService";
 import { sampleDiagram } from "../data/sampleDiagram";
 
 interface Props {
@@ -17,12 +18,19 @@ export function DiagramList({ onOpen }: Props) {
   const user = useAuthStore((s) => s.user);
   const signOut = useAuthStore((s) => s.signOut);
   const [diagrams, setDiagrams] = useState<DiagramSummary[]>([]);
+  const [sharedDiagrams, setSharedDiagrams] = useState<SharedDiagramSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
     if (!user) return;
-    listMyDiagrams(user.id)
-      .then(setDiagrams)
+    Promise.all([
+      listMyDiagrams(user.id),
+      listSharedWithMe().catch(() => [] as SharedDiagramSummary[]),
+    ])
+      .then(([mine, shared]) => {
+        setDiagrams(mine);
+        setSharedDiagrams(shared);
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [user]);
@@ -109,7 +117,12 @@ export function DiagramList({ onOpen }: Props) {
             </div>
           )}
 
-          {/* Diagram list */}
+          {/* My diagrams list */}
+          {diagrams.length > 0 && (
+            <h2 className="text-xs font-semibold uppercase text-slate-500 tracking-wider pt-2">
+              Mis diagramas
+            </h2>
+          )}
           {diagrams.map((d) => (
             <button
               key={d.id}
@@ -137,6 +150,50 @@ export function DiagramList({ onOpen }: Props) {
               </button>
             </button>
           ))}
+
+          {/* Shared with me */}
+          {sharedDiagrams.length > 0 && (
+            <>
+              <h2 className="text-xs font-semibold uppercase text-slate-500 tracking-wider pt-4 flex items-center gap-2">
+                <Users className="w-3.5 h-3.5" />
+                Compartidos conmigo
+              </h2>
+              {sharedDiagrams.map((d) => (
+                <button
+                  key={d.id}
+                  onClick={() => onOpen(d.id)}
+                  className="flex items-center gap-4 w-full px-4 py-3 bg-slate-900 border border-slate-800 rounded-lg hover:border-slate-700 hover:bg-slate-800/50 transition-colors text-left group"
+                >
+                  <div className="p-2 rounded bg-slate-800 group-hover:bg-slate-700 transition-colors">
+                    <Users className="w-4 h-4 text-sky-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-slate-200 truncate">{d.name}</div>
+                    <div className="flex items-center gap-3 text-xs text-slate-500 mt-0.5">
+                      <span>{d.screenCount} pantallas</span>
+                      <span className="flex items-center gap-1">
+                        {d.owner_avatar ? (
+                          <img src={d.owner_avatar} className="w-3 h-3 rounded-full" alt="" />
+                        ) : null}
+                        {d.owner_name ?? d.owner_email}
+                      </span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                        d.role === "editor"
+                          ? "bg-violet-500/15 text-violet-300"
+                          : "bg-slate-700 text-slate-400"
+                      }`}>
+                        {d.role === "editor" ? "Editor" : "Visor"}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        {formatDate(d.updated_at)}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </>
+          )}
         </div>
       </div>
     </div>

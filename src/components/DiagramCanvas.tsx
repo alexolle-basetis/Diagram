@@ -12,6 +12,7 @@ import {
   type EdgeTypes,
   type OnNodeDrag,
   type NodeMouseHandler,
+  type OnConnect,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -32,6 +33,8 @@ export function DiagramCanvas() {
   const clearSelection = useDiagramStore((s) => s.clearSelection);
   const selection = useDiagramStore((s) => s.selection);
   const updateNodePosition = useDiagramStore((s) => s.updateNodePosition);
+  const addAction = useDiagramStore((s) => s.addAction);
+  const updateAction = useDiagramStore((s) => s.updateAction);
   const deleteScreen = useDiagramStore((s) => s.deleteScreen);
   const deleteAction = useDiagramStore((s) => s.deleteAction);
   const undo = useDiagramStore((s) => s.undo);
@@ -127,6 +130,37 @@ export function DiagramCanvas() {
     [updateNodePosition]
   );
 
+  // Handle new connections via drag-to-connect
+  const onConnect: OnConnect = useCallback(
+    (connection) => {
+      if (!connection.source || !connection.target) return;
+      // Prevent self-connections from __new__ handle
+      if (connection.source === connection.target && connection.sourceHandle === "__new__") return;
+
+      if (connection.sourceHandle === "__new__") {
+        // Create a new action pointing to the target screen
+        const actionId = addAction(connection.source, connection.target);
+        setSelection({
+          kind: "edge",
+          actionId,
+          sourceScreenId: connection.source,
+          targetScreenId: connection.target,
+        });
+      } else if (connection.sourceHandle) {
+        // Reconnect an existing action to a new target
+        updateAction(connection.source, connection.sourceHandle, {
+          targetScreen: connection.target,
+        });
+        setSelection({
+          kind: "edge",
+          actionId: connection.sourceHandle,
+          sourceScreenId: connection.source,
+          targetScreenId: connection.target,
+        });
+      }
+    },
+    [addAction, updateAction, setSelection]
+  );
 
   return (
     <div className="relative h-full w-full bg-slate-950">
@@ -139,6 +173,7 @@ export function DiagramCanvas() {
         onEdgeClick={onEdgeClick}
         onPaneClick={onPaneClick}
         onNodeDragStop={onNodeDragStop}
+        onConnect={onConnect}
 
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}

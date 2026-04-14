@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
-import { Zap, MessageSquare } from "lucide-react";
+import { Zap, MessageSquare, Plus } from "lucide-react";
 import type { ScreenNodeData } from "../utils/layoutEngine";
 import { STATUS_COLORS, SCREEN_COLORS, SCREEN_ICONS } from "../utils/layoutEngine";
 import { useDiagramStore } from "../store/useDiagramStore";
@@ -82,6 +82,18 @@ export function ScreenNode({ data, selected }: NodeProps<ScreenNodeType>) {
             />
           </div>
         ))}
+
+        {/* New connection handle */}
+        <div className="relative flex items-center gap-2 px-3 py-1.5 text-xs text-slate-500 hover:text-slate-300 hover:bg-slate-800/40 cursor-pointer transition-colors">
+          <Plus className="w-3 h-3 shrink-0" />
+          <span className="italic">Arrastra para conectar</span>
+          <Handle
+            type="source"
+            position={Position.Right}
+            id="__new__"
+            className="!w-2.5 !h-2.5 !bg-violet-500 !border-slate-800 !border-2 !right-[-5px]"
+          />
+        </div>
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import { ReactFlowProvider } from "@xyflow/react";
 import { Toolbar } from "./components/Toolbar";
 import { JsonEditor } from "./components/JsonEditor";
 import { DiagramCanvas } from "./components/DiagramCanvas";
+import { AiPanel } from "./components/AiPanel";
 import { LoginPage } from "./components/LoginPage";
 import { DiagramList } from "./components/DiagramList";
 import { useDiagramStore } from "./store/useDiagramStore";
@@ -19,6 +20,7 @@ function EditorView({ diagramId }: { diagramId: string | null }) {
   const showJsonPanel = useDiagramStore((s) => s.showJsonPanel);
   const setSaveStatus = useDiagramStore((s) => s.setSaveStatus);
   const [syncReady, setSyncReady] = useState(!diagramId);
+  const [showAiPanel, setShowAiPanel] = useState(false);
 
   const onLoaded = useCallback(() => setSyncReady(true), []);
   const onSaveStatusChange = useCallback(
@@ -42,7 +44,7 @@ function EditorView({ diagramId }: { diagramId: string | null }) {
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden">
-      <Toolbar />
+      <Toolbar showAiPanel={showAiPanel} onToggleAiPanel={() => setShowAiPanel((v) => !v)} />
       <div className="flex flex-1 overflow-hidden">
         {showJsonPanel && (
           <div className="w-[30%] min-w-[300px] h-full flex-shrink-0">
@@ -54,6 +56,11 @@ function EditorView({ diagramId }: { diagramId: string | null }) {
             <DiagramCanvas />
           </ReactFlowProvider>
         </div>
+        {showAiPanel && (
+          <div className="w-[350px] min-w-[300px] h-full flex-shrink-0">
+            <AiPanel onClose={() => setShowAiPanel(false)} />
+          </div>
+        )}
       </div>
     </div>
   );
