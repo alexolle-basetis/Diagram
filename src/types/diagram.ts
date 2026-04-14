@@ -5,7 +5,10 @@ export interface Action {
   label: string;
   targetScreen: string;
   errorTargetScreen?: string;
+  note?: string;
 }
+
+export type ScreenColor = "slate" | "violet" | "blue" | "cyan" | "emerald" | "amber" | "rose" | "orange";
 
 export interface Screen {
   id: string;
@@ -15,6 +18,7 @@ export interface Screen {
   imageUrl?: string;
   status?: ScreenStatus;
   tags?: string[];
+  color?: ScreenColor;
   actions: Action[];
 }
 

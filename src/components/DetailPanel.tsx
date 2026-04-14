@@ -6,8 +6,8 @@ import {
 import { useDiagramStore } from "../store/useDiagramStore";
 import { generateCurl } from "../utils/exportUtils";
 import { compressImage } from "../utils/imageUtils";
-import type { ScreenStatus } from "../types/diagram";
-import { STATUS_COLORS } from "../utils/layoutEngine";
+import type { ScreenStatus, ScreenColor } from "../types/diagram";
+import { STATUS_COLORS, SCREEN_COLORS } from "../utils/layoutEngine";
 
 const MIN_WIDTH = 320;
 const MAX_WIDTH = 800;
@@ -184,6 +184,25 @@ function ScreenEditor({ screenId }: { screenId: string }) {
         />
       </Field>
 
+      {/* Color */}
+      <Field label="Color">
+        <div className="flex gap-1.5 flex-wrap">
+          {(Object.keys(SCREEN_COLORS) as ScreenColor[]).map((c) => {
+            const active = (screen.color ?? "slate") === c;
+            return (
+              <button
+                key={c}
+                onClick={() => updateScreen(screenId, { color: c })}
+                className={`w-7 h-7 rounded-md border-2 transition-all ${SCREEN_COLORS[c].header} ${
+                  active ? "border-white scale-110" : "border-transparent hover:border-slate-500"
+                }`}
+                title={c}
+              />
+            );
+          })}
+        </div>
+      </Field>
+
       {/* Image */}
       <Field label="Imagen">
         <ImageUploader
@@ -256,6 +275,14 @@ function ScreenEditor({ screenId }: { screenId: string }) {
                   </select>
                 </div>
 
+                {/* Note */}
+                <input
+                  value={action.note ?? ""}
+                  onChange={(e) => updateAction(screenId, action.id, { note: e.target.value || undefined })}
+                  className="input-field !py-1 text-xs text-sky-300"
+                  placeholder="Nota o comentario sobre la transición..."
+                />
+
                 {!hasApi ? (
                   <button
                     onClick={() => setApiCall({ actionId: action.id, method: "GET", endpoint: "/api/v1/" })}
@@ -304,6 +331,7 @@ function EdgeEditor({
   const setApiCall = useDiagramStore((s) => s.setApiCall);
   const deleteApiCall = useDiagramStore((s) => s.deleteApiCall);
   const deleteAction = useDiagramStore((s) => s.deleteAction);
+  const updateAction = useDiagramStore((s) => s.updateAction);
   const action = sourceScreen?.actions.find((a) => a.id === actionId);
   const [copiedCurl, setCopiedCurl] = useState(false);
   const [activeTab, setActiveTab] = useState<"response" | "error" | "headers">("response");
@@ -328,6 +356,17 @@ function EdgeEditor({
         <ArrowRight className="w-3 h-3 shrink-0" />
         <span className="text-violet-400 font-medium">{targetScreen?.title ?? "?"}</span>
       </div>
+
+      {/* Note */}
+      <Field label="Nota / Comentario">
+        <textarea
+          value={action.note ?? ""}
+          onChange={(e) => updateAction(sourceScreenId, actionId, { note: e.target.value || undefined })}
+          rows={2}
+          className="input-field resize-y text-xs text-sky-300"
+          placeholder="Explica la transición, condiciones, notas técnicas..."
+        />
+      </Field>
 
       {!apiCall ? (
         <button

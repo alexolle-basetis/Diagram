@@ -1,5 +1,5 @@
 import type { Node, Edge } from "@xyflow/react";
-import type { DiagramData, ScreenStatus } from "../types/diagram";
+import type { DiagramData, ScreenStatus, ScreenColor } from "../types/diagram";
 
 const NODE_WIDTH = 280;
 const NODE_HEIGHT_BASE = 120;
@@ -12,8 +12,9 @@ export interface ScreenNodeData {
   title: string;
   description: string;
   status: ScreenStatus;
+  color: ScreenColor;
   tags: string[];
-  actions: { id: string; label: string; hasApi: boolean }[];
+  actions: { id: string; label: string; hasApi: boolean; hasNote: boolean }[];
   [key: string]: unknown;
 }
 
@@ -22,9 +23,21 @@ export interface ApiEdgeData {
   hasApi: boolean;
   method?: string;
   endpoint?: string;
+  note?: string;
   isErrorPath?: boolean;
   [key: string]: unknown;
 }
+
+export const SCREEN_COLORS: Record<ScreenColor, { header: string; border: string; accent: string }> = {
+  slate:   { header: "bg-slate-800/50",   border: "border-slate-700",   accent: "text-slate-400" },
+  violet:  { header: "bg-violet-900/40",  border: "border-violet-700",  accent: "text-violet-400" },
+  blue:    { header: "bg-blue-900/40",    border: "border-blue-700",    accent: "text-blue-400" },
+  cyan:    { header: "bg-cyan-900/40",    border: "border-cyan-700",    accent: "text-cyan-400" },
+  emerald: { header: "bg-emerald-900/40", border: "border-emerald-700", accent: "text-emerald-400" },
+  amber:   { header: "bg-amber-900/40",   border: "border-amber-700",   accent: "text-amber-400" },
+  rose:    { header: "bg-rose-900/40",    border: "border-rose-700",    accent: "text-rose-400" },
+  orange:  { header: "bg-orange-900/40",  border: "border-orange-700",  accent: "text-orange-400" },
+};
 
 export const STATUS_COLORS: Record<ScreenStatus, { border: string; bg: string; badge: string; text: string }> = {
   pending: { border: "border-slate-600", bg: "bg-slate-500/10", badge: "bg-slate-500/20 text-slate-400", text: "Pendiente" },
@@ -113,11 +126,13 @@ export function buildFlowElements(
           title: screen.title,
           description: screen.description,
           status: screen.status ?? "pending",
+          color: screen.color ?? "slate",
           tags: screen.tags ?? [],
           actions: screen.actions.map((a) => ({
             id: a.id,
             label: a.label,
             hasApi: apiByAction.has(a.id),
+            hasNote: !!a.note,
           })),
         } satisfies ScreenNodeData,
       });
@@ -140,6 +155,7 @@ export function buildFlowElements(
           hasApi: !!api,
           method: api?.method,
           endpoint: api?.endpoint,
+          note: action.note,
           isErrorPath: false,
         } satisfies ApiEdgeData,
       });
@@ -157,6 +173,7 @@ export function buildFlowElements(
             hasApi: !!api,
             method: api?.method,
             endpoint: api?.endpoint,
+            note: action.note,
             isErrorPath: true,
           } satisfies ApiEdgeData,
         });

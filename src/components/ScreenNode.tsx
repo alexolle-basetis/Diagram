@@ -1,7 +1,7 @@
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
-import { Monitor, Zap, Plus } from "lucide-react";
+import { Monitor, Zap, Plus, MessageSquare } from "lucide-react";
 import type { ScreenNodeData } from "../utils/layoutEngine";
-import { STATUS_COLORS } from "../utils/layoutEngine";
+import { STATUS_COLORS, SCREEN_COLORS } from "../utils/layoutEngine";
 import { useDiagramStore } from "../store/useDiagramStore";
 
 type ScreenNodeType = Node<ScreenNodeData, "screenNode">;
@@ -9,15 +9,15 @@ type ScreenNodeType = Node<ScreenNodeData, "screenNode">;
 export function ScreenNode({ data, selected }: NodeProps<ScreenNodeType>) {
   const filterTag = useDiagramStore((s) => s.filterTag);
   const statusStyle = STATUS_COLORS[data.status];
+  const colorStyle = SCREEN_COLORS[data.color];
 
-  // Dim node if a tag filter is active and this node doesn't match
   const dimmed = filterTag ? !data.tags.includes(filterTag) : false;
 
   return (
     <div
       className={`
         w-[280px] rounded-lg border shadow-lg transition-all
-        ${selected ? "border-violet-500 shadow-violet-500/25 ring-1 ring-violet-500/30" : statusStyle.border}
+        ${selected ? "border-violet-500 shadow-violet-500/25 ring-1 ring-violet-500/30" : colorStyle.border}
         ${dimmed ? "opacity-25" : "opacity-100"}
         bg-slate-900
       `}
@@ -30,8 +30,8 @@ export function ScreenNode({ data, selected }: NodeProps<ScreenNodeType>) {
       />
 
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-slate-700/60 bg-slate-800/50 rounded-t-lg">
-        <Monitor className="w-4 h-4 text-violet-400 shrink-0" />
+      <div className={`flex items-center gap-2 px-3 py-2.5 border-b border-slate-700/60 rounded-t-lg ${colorStyle.header}`}>
+        <Monitor className={`w-4 h-4 shrink-0 ${colorStyle.accent}`} />
         <span className="font-semibold text-sm text-slate-100 truncate flex-1">{data.title}</span>
         <span className={`text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded ${statusStyle.badge}`}>
           {statusStyle.text}
@@ -65,6 +65,9 @@ export function ScreenNode({ data, selected }: NodeProps<ScreenNodeType>) {
               className={`w-3 h-3 shrink-0 ${action.hasApi ? "text-amber-400" : "text-slate-500"}`}
             />
             <span className="truncate">{action.label}</span>
+            {action.hasNote && (
+              <MessageSquare className="w-3 h-3 shrink-0 text-sky-400/70" />
+            )}
             {action.hasApi && (
               <span className="ml-auto text-[10px] font-mono font-medium text-amber-400/80 bg-amber-400/10 px-1.5 py-0.5 rounded">
                 API
