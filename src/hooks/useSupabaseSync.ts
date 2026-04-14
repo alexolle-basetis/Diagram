@@ -103,7 +103,7 @@ export function useSupabaseSync(
       const remotePositions = (row.positions ?? {}) as Record<string, { x: number; y: number }>;
 
       const store = useDiagramStore.getState();
-      store.loadDiagram(remoteDiagram);
+      store.mergeRemoteDiagram(remoteDiagram);
       Object.entries(remotePositions).forEach(([id, pos]) => {
         store.updateNodePosition(id, pos);
       });

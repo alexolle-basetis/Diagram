@@ -101,8 +101,10 @@ interface DiagramStore {
   // Validation
   validate: () => ValidationError[];
 
-  // Load external diagram (from URL share) — no undo history push
+  // Load external diagram (from URL share — resets everything)
   loadDiagram: (diagram: DiagramData) => void;
+  // Merge remote changes (from real-time sync — preserves selection & undo)
+  mergeRemoteDiagram: (diagram: DiagramData) => void;
 
   // Helpers
   getScreen: (id: string) => Screen | undefined;
@@ -381,6 +383,15 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       future: [],
       nodePositions: {},
       selection: { kind: "none" },
+    });
+  },
+
+  mergeRemoteDiagram: (diagram) => {
+    if (!diagram.apiCalls) diagram.apiCalls = [];
+    set({
+      diagram,
+      jsonText: JSON.stringify(diagram, null, 2),
+      validationErrors: validateDiagram(diagram),
     });
   },
 
