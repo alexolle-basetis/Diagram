@@ -192,7 +192,7 @@ export function AiPanel({ onClose }: { onClose: () => void }) {
             </div>
             <p className="text-[10px] text-slate-600">
               Consigue tu clave en{" "}
-              <span className="text-violet-400">aistudio.google.com</span>.
+              <a href={"https://aistudio.google.com"}><span className="text-violet-400">aistudio.google.com</span></a>.
               Se guarda solo en tu navegador.
             </p>
           </div>
