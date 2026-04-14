@@ -1,7 +1,7 @@
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
-import { Monitor, Zap, Plus, MessageSquare } from "lucide-react";
+import { Zap, MessageSquare } from "lucide-react";
 import type { ScreenNodeData } from "../utils/layoutEngine";
-import { STATUS_COLORS, SCREEN_COLORS } from "../utils/layoutEngine";
+import { STATUS_COLORS, SCREEN_COLORS, SCREEN_ICONS } from "../utils/layoutEngine";
 import { useDiagramStore } from "../store/useDiagramStore";
 
 type ScreenNodeType = Node<ScreenNodeData, "screenNode">;
@@ -10,6 +10,7 @@ export function ScreenNode({ data, selected }: NodeProps<ScreenNodeType>) {
   const filterTag = useDiagramStore((s) => s.filterTag);
   const statusStyle = STATUS_COLORS[data.status];
   const colorStyle = SCREEN_COLORS[data.color];
+  const IconComponent = SCREEN_ICONS[data.icon]?.icon ?? SCREEN_ICONS.monitor.icon;
 
   const dimmed = filterTag ? !data.tags.includes(filterTag) : false;
 
@@ -31,7 +32,7 @@ export function ScreenNode({ data, selected }: NodeProps<ScreenNodeType>) {
 
       {/* Header */}
       <div className={`flex items-center gap-2 px-3 py-2.5 border-b border-slate-700/60 rounded-t-lg ${colorStyle.header}`}>
-        <Monitor className={`w-4 h-4 shrink-0 ${colorStyle.accent}`} />
+        <IconComponent className={`w-4 h-4 shrink-0 ${colorStyle.accent}`} />
         <span className="font-semibold text-sm text-slate-100 truncate flex-1">{data.title}</span>
         <span className={`text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded ${statusStyle.badge}`}>
           {statusStyle.text}
@@ -81,18 +82,6 @@ export function ScreenNode({ data, selected }: NodeProps<ScreenNodeType>) {
             />
           </div>
         ))}
-
-        {/* New connection handle */}
-        <div className="relative flex items-center gap-2 px-3 py-1 text-xs text-slate-600">
-          <Plus className="w-3 h-3" />
-          <span className="italic">Conectar...</span>
-          <Handle
-            type="source"
-            position={Position.Right}
-            id="__new__"
-            className="!w-2.5 !h-2.5 !bg-slate-600 !border-slate-800 !border-2 !right-[-5px] hover:!bg-emerald-500"
-          />
-        </div>
       </div>
     </div>
   );

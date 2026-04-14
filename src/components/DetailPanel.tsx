@@ -1,14 +1,14 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import {
   X, Monitor, Globe, ArrowRight, Plus, Trash2, Copy, Check,
-  AlertCircle, Upload, ImageIcon, Pencil, Eye,
+  AlertCircle, Upload, ImageIcon, Pencil, Eye, ChevronDown, ChevronRight,
 } from "lucide-react";
 import { useDiagramStore } from "../store/useDiagramStore";
 import { generateCurl } from "../utils/exportUtils";
 import { compressImage } from "../utils/imageUtils";
 import { Markdown } from "./Markdown";
-import type { ScreenStatus, ScreenColor } from "../types/diagram";
-import { STATUS_COLORS, SCREEN_COLORS } from "../utils/layoutEngine";
+import type { ScreenStatus, ScreenColor, ScreenIcon } from "../types/diagram";
+import { STATUS_COLORS, SCREEN_COLORS, SCREEN_ICONS } from "../utils/layoutEngine";
 
 const MIN_WIDTH = 320;
 const MAX_WIDTH = 800;
@@ -201,6 +201,30 @@ function ScreenEditor({ screenId }: { screenId: string }) {
         </div>
       </Field>
 
+      {/* Icon */}
+      <Field label="Icono">
+        <div className="flex gap-1 flex-wrap">
+          {(Object.keys(SCREEN_ICONS) as ScreenIcon[]).map((key) => {
+            const { icon: Ic, label } = SCREEN_ICONS[key];
+            const active = (screen.icon ?? "monitor") === key;
+            return (
+              <button
+                key={key}
+                onClick={() => updateScreen(screenId, { icon: key })}
+                className={`p-1.5 rounded-md border transition-all ${
+                  active
+                    ? "border-violet-500 bg-violet-500/20 text-violet-300"
+                    : "border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-800"
+                }`}
+                title={label}
+              >
+                <Ic className="w-3.5 h-3.5" />
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+
       {/* Image */}
       <Field label="Imagen">
         <ImageUploader
@@ -223,82 +247,21 @@ function ScreenEditor({ screenId }: { screenId: string }) {
           </button>
         </div>
         <div className="space-y-2">
-          {screen.actions.map((action) => {
-            const hasApi = !!getApiCall(action.id);
-            return (
-              <div key={action.id} className="bg-slate-800 rounded-lg border border-slate-700/50 p-2.5 space-y-2">
-                <div className="flex items-center gap-2">
-                  <input
-                    value={action.label}
-                    onChange={(e) => updateAction(screenId, action.id, { label: e.target.value })}
-                    className="input-field flex-1 !py-1 text-xs"
-                    placeholder="Nombre de la acción"
-                  />
-                  <button
-                    onClick={() => deleteAction(screenId, action.id)}
-                    className="p-1 text-slate-500 hover:text-red-400 transition-colors"
-                    title="Eliminar acción"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-slate-500 shrink-0">Destino:</span>
-                  <select
-                    value={action.targetScreen}
-                    onChange={(e) => updateAction(screenId, action.id, { targetScreen: e.target.value })}
-                    className="input-field flex-1 !py-1 text-xs"
-                  >
-                    <option value={screenId}>{screen.title} (self)</option>
-                    {screenOptions.map((s) => (
-                      <option key={s.id} value={s.id}>{s.title}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-slate-500 shrink-0 flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3 text-red-400" /> Error:
-                  </span>
-                  <select
-                    value={action.errorTargetScreen ?? ""}
-                    onChange={(e) => updateAction(screenId, action.id, { errorTargetScreen: e.target.value || undefined })}
-                    className="input-field flex-1 !py-1 text-xs"
-                  >
-                    <option value="">Sin flujo de error</option>
-                    {diagram.screens.map((s) => (
-                      <option key={s.id} value={s.id}>{s.title}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Note */}
-                <input
-                  value={action.note ?? ""}
-                  onChange={(e) => updateAction(screenId, action.id, { note: e.target.value || undefined })}
-                  className="input-field !py-1 text-xs text-sky-300"
-                  placeholder="Nota o comentario sobre la transición..."
-                />
-
-                {!hasApi ? (
-                  <button
-                    onClick={() => setApiCall({ actionId: action.id, method: "GET", endpoint: "/api/v1/" })}
-                    className="flex items-center gap-1 text-[11px] text-amber-400/70 hover:text-amber-400 transition-colors"
-                  >
-                    <Globe className="w-3 h-3" /> Añadir API Call
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => setSelection({ kind: "edge", actionId: action.id, sourceScreenId: screenId, targetScreenId: action.targetScreen })}
-                    className="flex items-center gap-1 text-[11px] text-amber-400 hover:text-amber-300 transition-colors"
-                  >
-                    <Globe className="w-3 h-3" /> Ver/Editar API Call
-                  </button>
-                )}
-              </div>
-            );
-          })}
+          {screen.actions.map((action) => (
+            <CollapsibleAction
+              key={action.id}
+              action={action}
+              screenId={screenId}
+              screenTitle={screen.title}
+              screenOptions={screenOptions}
+              allScreens={diagram.screens}
+              hasApi={!!getApiCall(action.id)}
+              onUpdate={(patch) => updateAction(screenId, action.id, patch)}
+              onDelete={() => deleteAction(screenId, action.id)}
+              onAddApi={() => setApiCall({ actionId: action.id, method: "GET", endpoint: "/api/v1/" })}
+              onViewApi={() => setSelection({ kind: "edge", actionId: action.id, sourceScreenId: screenId, targetScreenId: action.targetScreen })}
+            />
+          ))}
         </div>
       </div>
 
@@ -544,6 +507,111 @@ function ImageUploader({
             <div className="absolute bottom-2 left-2 flex items-center gap-1 px-2 py-0.5 bg-slate-900/80 rounded text-[10px] text-slate-400">
               <ImageIcon className="w-3 h-3" /> Embebida
             </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Collapsible action card ───────────────────────────────────────────
+function CollapsibleAction({
+  action,
+  screenId,
+  screenTitle,
+  screenOptions,
+  allScreens,
+  hasApi,
+  onUpdate,
+  onDelete,
+  onAddApi,
+  onViewApi,
+}: {
+  action: import("../types/diagram").Action;
+  screenId: string;
+  screenTitle: string;
+  screenOptions: import("../types/diagram").Screen[];
+  allScreens: import("../types/diagram").Screen[];
+  hasApi: boolean;
+  onUpdate: (patch: Partial<import("../types/diagram").Action>) => void;
+  onDelete: () => void;
+  onAddApi: () => void;
+  onViewApi: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const targetName = allScreens.find((s) => s.id === action.targetScreen)?.title ?? action.targetScreen;
+
+  return (
+    <div className="bg-slate-800 rounded-lg border border-slate-700/50 overflow-hidden">
+      {/* Header — always visible */}
+      <div
+        className="flex items-center gap-2 px-2.5 py-2 cursor-pointer hover:bg-slate-700/30 transition-colors"
+        onClick={() => setOpen(!open)}
+      >
+        {open ? <ChevronDown className="w-3 h-3 text-slate-500 shrink-0" /> : <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" />}
+        <span className="text-xs text-slate-200 truncate flex-1">{action.label || "Sin nombre"}</span>
+        <span className="text-[10px] text-slate-500 truncate max-w-[80px]">{targetName}</span>
+        {hasApi && <span className="text-[9px] font-mono text-amber-400/80 bg-amber-400/10 px-1 py-0.5 rounded">API</span>}
+        {action.note && <span className="text-[9px] text-sky-400/60">💬</span>}
+      </div>
+
+      {/* Expanded content */}
+      {open && (
+        <div className="px-2.5 pb-2.5 space-y-2 border-t border-slate-700/40 pt-2">
+          <div className="flex items-center gap-2">
+            <input
+              value={action.label}
+              onChange={(e) => onUpdate({ label: e.target.value })}
+              className="input-field flex-1 !py-1 text-xs"
+              placeholder="Nombre de la acción"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button onClick={onDelete} className="p-1 text-slate-500 hover:text-red-400 transition-colors" title="Eliminar">
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-slate-500 shrink-0">Destino:</span>
+            <select
+              value={action.targetScreen}
+              onChange={(e) => onUpdate({ targetScreen: e.target.value })}
+              className="input-field flex-1 !py-1 text-xs"
+            >
+              <option value={screenId}>{screenTitle} (self)</option>
+              {screenOptions.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-slate-500 shrink-0 flex items-center gap-1">
+              <AlertCircle className="w-3 h-3 text-red-400" /> Error:
+            </span>
+            <select
+              value={action.errorTargetScreen ?? ""}
+              onChange={(e) => onUpdate({ errorTargetScreen: e.target.value || undefined })}
+              className="input-field flex-1 !py-1 text-xs"
+            >
+              <option value="">Sin flujo de error</option>
+              {allScreens.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}
+            </select>
+          </div>
+
+          <input
+            value={action.note ?? ""}
+            onChange={(e) => onUpdate({ note: e.target.value || undefined })}
+            className="input-field !py-1 text-xs text-sky-300"
+            placeholder="Nota o comentario..."
+          />
+
+          {!hasApi ? (
+            <button onClick={onAddApi} className="flex items-center gap-1 text-[11px] text-amber-400/70 hover:text-amber-400 transition-colors">
+              <Globe className="w-3 h-3" /> Añadir API Call
+            </button>
+          ) : (
+            <button onClick={onViewApi} className="flex items-center gap-1 text-[11px] text-amber-400 hover:text-amber-300 transition-colors">
+              <Globe className="w-3 h-3" /> Ver/Editar API Call
+            </button>
           )}
         </div>
       )}

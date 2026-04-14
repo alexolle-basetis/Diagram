@@ -1,7 +1,7 @@
 import {
   Plus, Undo2, Redo2, Download, Upload, Image, PanelLeftClose, PanelLeftOpen,
   Search, AlertTriangle, CheckCircle2, Tag, Share2, Check, ArrowLeft,
-  Cloud, CloudOff, Loader2, LogOut, Wifi,
+  Cloud, CloudOff, Loader2, LogOut, Wifi, LayoutGrid,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { useDiagramStore } from "../store/useDiagramStore";
@@ -22,6 +22,7 @@ export function Toolbar() {
   const redo = useDiagramStore((s) => s.redo);
   const past = useDiagramStore((s) => s.past);
   const future = useDiagramStore((s) => s.future);
+  const clearPositions = useDiagramStore((s) => s.clearPositions);
   const setSearchOpen = useDiagramStore((s) => s.setSearchOpen);
   const validationErrors = useDiagramStore((s) => s.validationErrors);
   const filterTag = useDiagramStore((s) => s.filterTag);
@@ -127,6 +128,7 @@ export function Toolbar() {
       {/* Undo / Redo */}
       <ToolbarButton icon={<Undo2 className="w-4 h-4" />} tooltip="Deshacer (Ctrl+Z)" onClick={undo} disabled={past.length === 0} />
       <ToolbarButton icon={<Redo2 className="w-4 h-4" />} tooltip="Rehacer (Ctrl+Shift+Z)" onClick={redo} disabled={future.length === 0} />
+      <ToolbarButton icon={<LayoutGrid className="w-4 h-4" />} tooltip="Reordenar automáticamente" onClick={clearPositions} />
 
       <Separator />
 

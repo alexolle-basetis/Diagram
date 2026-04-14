@@ -141,7 +141,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
   diagram: initialDiagram,
   jsonText: JSON.stringify(initialDiagram, null, 2),
   parseError: null,
-  showJsonPanel: true,
+  showJsonPanel: localStorage.getItem("diagram-show-json") === "true",
   selection: { kind: "none" },
   searchOpen: false,
   searchTerm: "",
@@ -177,7 +177,11 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
     }
   },
 
-  toggleJsonPanel: () => set((s) => ({ showJsonPanel: !s.showJsonPanel })),
+  toggleJsonPanel: () => set((s) => {
+    const next = !s.showJsonPanel;
+    localStorage.setItem("diagram-show-json", String(next));
+    return { showJsonPanel: next };
+  }),
 
   // ── Selection ───────────────────────────────────────────────────
   setSelection: (sel) => set({ selection: sel }),

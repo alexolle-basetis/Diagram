@@ -10,7 +10,6 @@ import {
   BackgroundVariant,
   type NodeTypes,
   type EdgeTypes,
-  type OnConnect,
   type OnNodeDrag,
   type NodeMouseHandler,
 } from "@xyflow/react";
@@ -33,7 +32,6 @@ export function DiagramCanvas() {
   const clearSelection = useDiagramStore((s) => s.clearSelection);
   const selection = useDiagramStore((s) => s.selection);
   const updateNodePosition = useDiagramStore((s) => s.updateNodePosition);
-  const addAction = useDiagramStore((s) => s.addAction);
   const deleteScreen = useDiagramStore((s) => s.deleteScreen);
   const deleteAction = useDiagramStore((s) => s.deleteAction);
   const undo = useDiagramStore((s) => s.undo);
@@ -129,25 +127,6 @@ export function DiagramCanvas() {
     [updateNodePosition]
   );
 
-  // Create new action when connecting nodes
-  const onConnect: OnConnect = useCallback(
-    (connection) => {
-      if (!connection.source || !connection.target) return;
-      const sourceHandle = connection.sourceHandle;
-
-      if (sourceHandle === "__new__") {
-        // Create a new action from source to target
-        const newActionId = addAction(connection.source, connection.target);
-        setSelection({
-          kind: "edge",
-          actionId: newActionId,
-          sourceScreenId: connection.source,
-          targetScreenId: connection.target,
-        });
-      }
-    },
-    [addAction, setSelection]
-  );
 
   return (
     <div className="relative h-full w-full bg-slate-950">
@@ -160,7 +139,7 @@ export function DiagramCanvas() {
         onEdgeClick={onEdgeClick}
         onPaneClick={onPaneClick}
         onNodeDragStop={onNodeDragStop}
-        onConnect={onConnect}
+
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView

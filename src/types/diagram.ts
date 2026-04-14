@@ -10,6 +10,13 @@ export interface Action {
 
 export type ScreenColor = "slate" | "violet" | "blue" | "cyan" | "emerald" | "amber" | "rose" | "orange";
 
+export type ScreenIcon =
+  | "monitor" | "smartphone" | "layout" | "home" | "user" | "settings"
+  | "shield" | "key" | "credit-card" | "shopping-cart" | "file-text"
+  | "mail" | "bell" | "search" | "map" | "camera" | "database"
+  | "cloud" | "terminal" | "globe" | "heart" | "zap" | "lock"
+  | "log-in" | "list" | "bar-chart";
+
 export interface Screen {
   id: string;
   title: string;
@@ -19,6 +26,7 @@ export interface Screen {
   status?: ScreenStatus;
   tags?: string[];
   color?: ScreenColor;
+  icon?: ScreenIcon;
   actions: Action[];
 }
 

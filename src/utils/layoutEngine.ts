@@ -1,5 +1,40 @@
 import type { Node, Edge } from "@xyflow/react";
-import type { DiagramData, ScreenStatus, ScreenColor } from "../types/diagram";
+import type { DiagramData, ScreenStatus, ScreenColor, ScreenIcon } from "../types/diagram";
+import {
+  Monitor, Smartphone, Layout, Home, User, Settings, Shield, Key,
+  CreditCard, ShoppingCart, FileText, Mail, Bell, Search, Map as MapIcon, Camera,
+  Database, Cloud, Terminal, Globe, Heart, Zap, Lock, LogIn, List, BarChart,
+  type LucideIcon,
+} from "lucide-react";
+
+export const SCREEN_ICONS: Record<ScreenIcon, { icon: LucideIcon; label: string }> = {
+  "monitor": { icon: Monitor, label: "Monitor" },
+  "smartphone": { icon: Smartphone, label: "Móvil" },
+  "layout": { icon: Layout, label: "Layout" },
+  "home": { icon: Home, label: "Inicio" },
+  "user": { icon: User, label: "Usuario" },
+  "settings": { icon: Settings, label: "Ajustes" },
+  "shield": { icon: Shield, label: "Seguridad" },
+  "key": { icon: Key, label: "Clave" },
+  "credit-card": { icon: CreditCard, label: "Pago" },
+  "shopping-cart": { icon: ShoppingCart, label: "Carrito" },
+  "file-text": { icon: FileText, label: "Documento" },
+  "mail": { icon: Mail, label: "Email" },
+  "bell": { icon: Bell, label: "Notificación" },
+  "search": { icon: Search, label: "Búsqueda" },
+  "map": { icon: MapIcon, label: "Mapa" },
+  "camera": { icon: Camera, label: "Cámara" },
+  "database": { icon: Database, label: "Base datos" },
+  "cloud": { icon: Cloud, label: "Cloud" },
+  "terminal": { icon: Terminal, label: "Terminal" },
+  "globe": { icon: Globe, label: "Web" },
+  "heart": { icon: Heart, label: "Favorito" },
+  "zap": { icon: Zap, label: "Acción" },
+  "lock": { icon: Lock, label: "Bloqueo" },
+  "log-in": { icon: LogIn, label: "Login" },
+  "list": { icon: List, label: "Lista" },
+  "bar-chart": { icon: BarChart, label: "Gráfico" },
+};
 
 const NODE_WIDTH = 280;
 const NODE_HEIGHT_BASE = 120;
@@ -13,6 +48,7 @@ export interface ScreenNodeData {
   description: string;
   status: ScreenStatus;
   color: ScreenColor;
+  icon: ScreenIcon;
   tags: string[];
   actions: { id: string; label: string; hasApi: boolean; hasNote: boolean }[];
   [key: string]: unknown;
@@ -127,6 +163,7 @@ export function buildFlowElements(
           description: screen.description,
           status: screen.status ?? "pending",
           color: screen.color ?? "slate",
+          icon: screen.icon ?? "monitor",
           tags: screen.tags ?? [],
           actions: screen.actions.map((a) => ({
             id: a.id,
