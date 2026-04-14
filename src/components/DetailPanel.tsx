@@ -59,7 +59,7 @@ export function DetailPanel() {
 
   return (
     <div
-      className="absolute top-0 right-0 h-full bg-slate-900 border-l border-slate-700 shadow-2xl z-50 flex overflow-hidden"
+      className="detail-panel absolute top-0 right-0 h-full bg-slate-900 border-l border-slate-700 shadow-2xl z-50 flex overflow-hidden"
       style={{ width }}
     >
       {/* Resize handle */}

@@ -131,7 +131,7 @@ export function AiPanel({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-900 border-l border-slate-700">
+    <div className="ai-panel flex flex-col h-full bg-slate-900 border-l border-slate-700">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 shrink-0">
         <div className="flex items-center gap-2">

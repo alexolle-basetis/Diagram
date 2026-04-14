@@ -57,7 +57,7 @@ export function DiagramList({ onOpen }: Props) {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-slate-950 text-slate-200">
+    <div className="diagram-list flex flex-col h-screen bg-slate-950 text-slate-200">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
         <div className="flex items-center gap-3">
@@ -127,7 +127,7 @@ export function DiagramList({ onOpen }: Props) {
             <button
               key={d.id}
               onClick={() => onOpen(d.id)}
-              className="flex items-center gap-4 w-full px-4 py-3 bg-slate-900 border border-slate-800 rounded-lg hover:border-slate-700 hover:bg-slate-800/50 transition-colors text-left group"
+              className="diagram-card flex items-center gap-4 w-full px-4 py-3 bg-slate-900 border border-slate-800 rounded-lg hover:border-slate-700 hover:bg-slate-800/50 transition-colors text-left group"
             >
               <div className="p-2 rounded bg-slate-800 group-hover:bg-slate-700 transition-colors">
                 <GitBranch className="w-4 h-4 text-violet-400" />
@@ -162,7 +162,7 @@ export function DiagramList({ onOpen }: Props) {
                 <button
                   key={d.id}
                   onClick={() => onOpen(d.id)}
-                  className="flex items-center gap-4 w-full px-4 py-3 bg-slate-900 border border-slate-800 rounded-lg hover:border-slate-700 hover:bg-slate-800/50 transition-colors text-left group"
+                  className="diagram-card flex items-center gap-4 w-full px-4 py-3 bg-slate-900 border border-slate-800 rounded-lg hover:border-slate-700 hover:bg-slate-800/50 transition-colors text-left group"
                 >
                   <div className="p-2 rounded bg-slate-800 group-hover:bg-slate-700 transition-colors">
                     <Users className="w-4 h-4 text-sky-400" />

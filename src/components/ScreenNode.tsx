@@ -17,7 +17,7 @@ export function ScreenNode({ data, selected }: NodeProps<ScreenNodeType>) {
   return (
     <div
       className={`
-        w-[280px] rounded-lg border shadow-lg transition-all
+        screen-node w-[280px] rounded-lg border shadow-lg transition-all
         ${selected ? "border-violet-500 shadow-violet-500/25 ring-1 ring-violet-500/30" : colorStyle.border}
         ${dimmed ? "opacity-25" : "opacity-100"}
         bg-slate-900
@@ -31,7 +31,7 @@ export function ScreenNode({ data, selected }: NodeProps<ScreenNodeType>) {
       />
 
       {/* Header */}
-      <div className={`flex items-center gap-2 px-3 py-2.5 border-b border-slate-700/60 rounded-t-lg ${colorStyle.header}`}>
+      <div className={`screen-node-header flex items-center gap-2 px-3 py-2.5 border-b border-slate-700/60 rounded-t-lg ${colorStyle.header}`}>
         <IconComponent className={`w-4 h-4 shrink-0 ${colorStyle.accent}`} />
         <span className="font-semibold text-sm text-slate-100 truncate flex-1">{data.title}</span>
         <span className={`text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded ${statusStyle.badge}`}>
@@ -40,7 +40,7 @@ export function ScreenNode({ data, selected }: NodeProps<ScreenNodeType>) {
       </div>
 
       {/* Description */}
-      <p className="px-3 py-2 text-xs text-slate-400 border-b border-slate-700/40">
+      <p className="screen-node-desc px-3 py-2 text-xs text-slate-400 border-b border-slate-700/40">
         {data.description || <span className="italic text-slate-600">Sin descripción</span>}
       </p>
 
@@ -60,7 +60,7 @@ export function ScreenNode({ data, selected }: NodeProps<ScreenNodeType>) {
         {data.actions.map((action) => (
           <div
             key={action.id}
-            className="relative flex items-center gap-2 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800/60"
+            className="screen-node-action relative flex items-center gap-2 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800/60"
           >
             <Zap
               className={`w-3 h-3 shrink-0 ${action.hasApi ? "text-amber-400" : "text-slate-500"}`}
@@ -84,7 +84,7 @@ export function ScreenNode({ data, selected }: NodeProps<ScreenNodeType>) {
         ))}
 
         {/* New connection handle */}
-        <div className="relative flex items-center gap-2 px-3 py-1.5 text-xs text-slate-500 hover:text-slate-300 hover:bg-slate-800/40 cursor-pointer transition-colors">
+        <div className="screen-node-new relative flex items-center gap-2 px-3 py-1.5 text-xs text-slate-500 hover:text-slate-300 hover:bg-slate-800/40 cursor-pointer transition-colors">
           <Plus className="w-3 h-3 shrink-0" />
           <span className="italic">Arrastra para conectar</span>
           <Handle

@@ -2,13 +2,36 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
+  getStraightPath,
+  getSmoothStepPath,
   type EdgeProps,
   type Edge,
 } from "@xyflow/react";
 import { ArrowRight, Globe, AlertCircle, MessageSquare } from "lucide-react";
 import type { ApiEdgeData } from "../utils/layoutEngine";
+import { usePreferencesStore } from "../store/usePreferencesStore";
 
 type ApiEdgeType = Edge<ApiEdgeData, "apiEdge">;
+
+function useEdgePath(params: {
+  sourceX: number; sourceY: number;
+  targetX: number; targetY: number;
+  sourcePosition: EdgeProps["sourcePosition"];
+  targetPosition: EdgeProps["targetPosition"];
+}): [string, number, number, number, number] {
+  const edgeStyle = usePreferencesStore((s) => s.edgeStyle);
+  switch (edgeStyle) {
+    case "straight":
+      return getStraightPath(params);
+    case "step":
+      return getSmoothStepPath({ ...params, borderRadius: 0 });
+    case "smoothstep":
+      return getSmoothStepPath(params);
+    case "bezier":
+    default:
+      return getBezierPath(params);
+  }
+}
 
 export function ApiEdge({
   id,
@@ -21,7 +44,7 @@ export function ApiEdge({
   data,
   selected,
 }: EdgeProps<ApiEdgeType>) {
-  const [edgePath, labelX, labelY] = getBezierPath({
+  const [edgePath, labelX, labelY] = useEdgePath({
     sourceX,
     sourceY,
     targetX,
@@ -29,6 +52,9 @@ export function ApiEdge({
     sourcePosition,
     targetPosition,
   });
+
+  const theme = usePreferencesStore((s) => s.theme);
+  const isLight = theme === "light";
 
   const hasApi = data?.hasApi ?? false;
   const hasNote = !!data?.note;
@@ -43,7 +69,7 @@ export function ApiEdge({
         ? "#f59e0b"
         : hasNote
           ? "#38bdf8"
-          : "#475569";
+          : isLight ? "#94a3b8" : "#475569";
 
   return (
     <>
@@ -65,10 +91,16 @@ export function ApiEdge({
               ${selected
                 ? "bg-violet-600 text-white border-violet-400 shadow-lg shadow-violet-500/30"
                 : isError
-                  ? "bg-red-900/80 text-red-300 border-red-500/40 hover:bg-red-800/80"
+                  ? isLight
+                    ? "bg-red-50 text-red-600 border-red-300 hover:bg-red-100"
+                    : "bg-red-900/80 text-red-300 border-red-500/40 hover:bg-red-800/80"
                   : hasApi
-                    ? "bg-slate-800 text-amber-300 border-amber-500/40 hover:bg-slate-700 hover:border-amber-400 font-mono"
-                    : "bg-slate-800 text-sky-300 border-sky-500/30 hover:bg-slate-700 hover:border-sky-400"
+                    ? isLight
+                      ? "bg-white text-amber-700 border-amber-400 hover:bg-amber-50 hover:border-amber-500 font-mono shadow-sm"
+                      : "bg-slate-800 text-amber-300 border-amber-500/40 hover:bg-slate-700 hover:border-amber-400 font-mono"
+                    : isLight
+                      ? "bg-white text-sky-700 border-sky-300 hover:bg-sky-50 hover:border-sky-400 shadow-sm"
+                      : "bg-slate-800 text-sky-300 border-sky-500/30 hover:bg-slate-700 hover:border-sky-400"
               }
             `}
             style={{

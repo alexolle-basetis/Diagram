@@ -21,6 +21,7 @@ import { ApiEdge } from "./ApiEdge";
 import { DetailPanel } from "./DetailPanel";
 import { SearchDialog } from "./SearchDialog";
 import { useDiagramStore } from "../store/useDiagramStore";
+import { usePreferencesStore } from "../store/usePreferencesStore";
 import { buildFlowElements } from "../utils/layoutEngine";
 
 const nodeTypes: NodeTypes = { screenNode: ScreenNode };
@@ -39,6 +40,8 @@ export function DiagramCanvas() {
   const deleteAction = useDiagramStore((s) => s.deleteAction);
   const undo = useDiagramStore((s) => s.undo);
   const redo = useDiagramStore((s) => s.redo);
+  const theme = usePreferencesStore((s) => s.theme);
+  const isLight = theme === "light";
 
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
     () => buildFlowElements(diagram, nodePositions),
@@ -163,7 +166,7 @@ export function DiagramCanvas() {
   );
 
   return (
-    <div className="relative h-full w-full bg-slate-950">
+    <div className="canvas-root relative h-full w-full bg-slate-950">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -186,14 +189,20 @@ export function DiagramCanvas() {
         deleteKeyCode={null}
         selectionKeyCode={null}
       >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#334155" />
+        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color={isLight ? "#cbd5e1" : "#334155"} />
         <Controls
-          className="!bg-slate-800 !border-slate-700 !rounded-lg !shadow-lg [&>button]:!bg-slate-800 [&>button]:!border-slate-700 [&>button]:!text-slate-400 [&>button:hover]:!bg-slate-700"
+          className={isLight
+            ? "!bg-white !border-slate-300 !rounded-lg !shadow-md [&>button]:!bg-white [&>button]:!border-slate-300 [&>button]:!text-slate-500 [&>button:hover]:!bg-slate-100"
+            : "!bg-slate-800 !border-slate-700 !rounded-lg !shadow-lg [&>button]:!bg-slate-800 [&>button]:!border-slate-700 [&>button]:!text-slate-400 [&>button:hover]:!bg-slate-700"
+          }
         />
         <MiniMap
-          className="!bg-slate-900 !border-slate-700 !rounded-lg"
-          nodeColor="#7c3aed"
-          maskColor="rgba(0, 0, 0, 0.6)"
+          className={isLight
+            ? "!bg-white !border-slate-300 !rounded-lg"
+            : "!bg-slate-900 !border-slate-700 !rounded-lg"
+          }
+          nodeColor={isLight ? "#8b5cf6" : "#7c3aed"}
+          maskColor={isLight ? "rgba(241, 245, 249, 0.7)" : "rgba(0, 0, 0, 0.6)"}
         />
       </ReactFlow>
 

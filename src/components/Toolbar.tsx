@@ -1,11 +1,12 @@
 import {
   Plus, Undo2, Redo2, Download, Upload, Image, PanelLeftClose, PanelLeftOpen,
   Search, AlertTriangle, CheckCircle2, Tag, Share2, Check, ArrowLeft,
-  Cloud, CloudOff, Loader2, LogOut, Wifi, LayoutGrid, Sparkles,
+  Cloud, CloudOff, Loader2, LogOut, Wifi, LayoutGrid, Sparkles, Sun, Moon, Spline,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { useDiagramStore } from "../store/useDiagramStore";
 import { useAuthStore } from "../store/useAuthStore";
+import { usePreferencesStore, type EdgeStyle } from "../store/usePreferencesStore";
 import { downloadJson, exportCanvasAsPng } from "../utils/exportUtils";
 import { buildShareUrl } from "../utils/urlShare";
 import { renameDiagram } from "../lib/diagramService";
@@ -38,6 +39,10 @@ export function Toolbar({ showAiPanel, onToggleAiPanel }: { showAiPanel: boolean
   const saveStatus = useDiagramStore((s) => s.saveStatus);
   const user = useAuthStore((s) => s.user);
   const signOut = useAuthStore((s) => s.signOut);
+  const theme = usePreferencesStore((s) => s.theme);
+  const setTheme = usePreferencesStore((s) => s.setTheme);
+  const edgeStyle = usePreferencesStore((s) => s.edgeStyle);
+  const setEdgeStyle = usePreferencesStore((s) => s.setEdgeStyle);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const [shared, setShared] = useState(false);
@@ -94,7 +99,7 @@ export function Toolbar({ showAiPanel, onToggleAiPanel }: { showAiPanel: boolean
   };
 
   return (
-    <div className="flex items-center gap-1 px-2 py-1.5 bg-slate-900 border-b border-slate-700 shrink-0">
+    <div className="toolbar-root flex items-center gap-1 px-2 py-1.5 bg-slate-900 border-b border-slate-700 shrink-0">
       {/* Back to list (cloud mode) */}
       {isCloud && cloudDiagramId && (
         <ToolbarButton icon={<ArrowLeft className="w-4 h-4" />} tooltip="Volver a mis diagramas" onClick={handleBack} />
@@ -164,6 +169,30 @@ export function Toolbar({ showAiPanel, onToggleAiPanel }: { showAiPanel: boolean
         label="AI"
         tooltip="Gemini AI"
         onClick={onToggleAiPanel}
+      />
+
+      <Separator />
+
+      {/* Edge style */}
+      <div className="flex items-center gap-1">
+        <Spline className="w-3 h-3 text-slate-500 dark:text-slate-500" />
+        <select
+          value={edgeStyle}
+          onChange={(e) => setEdgeStyle(e.target.value as EdgeStyle)}
+          className="bg-slate-800 dark:bg-slate-800 light:bg-slate-200 text-xs text-slate-300 dark:text-slate-300 light:text-slate-700 border border-slate-700 dark:border-slate-700 light:border-slate-300 rounded px-1.5 py-1 outline-none"
+        >
+          <option value="bezier">Bezier</option>
+          <option value="straight">Recta</option>
+          <option value="step">Escalón</option>
+          <option value="smoothstep">Escalón suave</option>
+        </select>
+      </div>
+
+      {/* Theme toggle */}
+      <ToolbarButton
+        icon={theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+        tooltip={theme === "dark" ? "Modo claro" : "Modo oscuro"}
+        onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
       />
 
       {/* Tag filter */}
@@ -274,5 +303,5 @@ function ToolbarButton({
 }
 
 function Separator() {
-  return <div className="w-px h-5 bg-slate-700 mx-1" />;
+  return <div className="toolbar-separator w-px h-5 bg-slate-700 mx-1" />;
 }
