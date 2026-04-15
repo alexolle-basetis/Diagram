@@ -85,7 +85,10 @@ Separado del store principal. Persistido a localStorage key `diagram-preferences
 
 - `theme: "dark"|"light"` (aplica clase `.light` al html)
 - `edgeStyle: "bezier"|"straight"|"step"|"smoothstep"` — trazado del edge
-- `edgeConnectMode: "flow"|"free"` — routing de handles. En `free` se usa `ConnectionMode.Loose` + handles source extra en top/bottom/left.
+- `edgeConnectMode: "flow"|"free"` — en `flow` los edges sólo eligen lados horizontales (left/right); en `free` eligen entre los 4. ReactFlow usa siempre `ConnectionMode.Loose`.
+- `cardDensity: "full"|"compact"|"minimal"` — controla qué secciones renderiza `ScreenNode`. `full` = todo; `compact` = header + descripción + contador de acciones; `minimal` = solo header.
+- `showEdgeLabels: boolean` — oculta los badges de método/endpoint/nota/condición/efecto en `ApiEdge` cuando está en `false`.
+- `showEdges: boolean` — filtra los edges a `[]` en `DiagramCanvas` cuando está en `false` (útil para ver solo los nodos).
 
 No mezclar con `useDiagramStore`. Datos del diagrama (colores por screen, tipos, etc.) van en el diagrama. Prefs cross-diagram van aquí.
 
@@ -123,6 +126,12 @@ Constantes: `NODE_WIDTH=280`, `NODE_HEIGHT_BASE=120`, `ACTION_HEIGHT=36`, `H_GAP
 
 Edges: cada acción genera 1 edge (`edge-{actionId}`) y, si tiene `errorTargetScreen`, un segundo edge (`edge-err-{actionId}`, rojo discontinuo). Edges hacia screens inexistentes se descartan (evita warnings de React Flow).
 
+**Selección geométrica de handles por edge**: tras resolver las posiciones finales (auto o manuales), el engine calcula `sourceHandle` y `targetHandle` por edge según el vector source-center → target-center:
+- `pickSourceSide(dx, dy, mode)` elige el lado del source que mira al target. En `flow` solo devuelve `"left"` o `"right"`; en `free` también `"top"`/`"bottom"`.
+- El target usa `OPPOSITE_SIDE[srcSide]`.
+- Resultado: edges nunca "dan la vuelta" alrededor de la card; salen del lado más corto y entran por el opuesto.
+- Los handles son compartidos por toda la card (no per-action), así que no dependen de qué acción dispare el edge.
+
 `ScreenNodeData` recibe `kind`/`viewMode`/`imageUrl` con defaults desde `KIND_DEFAULTS[kind]`.
 
 También exporta **`KIND_DEFAULTS`** (icon/color/label por `NodeKind`), **`SCREEN_ICONS`**, **`SCREEN_COLORS`** y **`STATUS_COLORS`**. Si añades un `ScreenIcon` nuevo, recuerda registrarlo aquí.
@@ -131,9 +140,10 @@ También exporta **`KIND_DEFAULTS`** (icon/color/label por `NodeKind`), **`SCREE
 
 `nodeTypes = { screenNode }`, `edgeTypes = { apiEdge }`.
 
-- **`onConnect`** — crea acción si `sourceHandle` empieza por `__new`, si no reconecta acción existente (`sourceHandle === action.id`).
+- **`onConnect`** — crea SIEMPRE una acción nueva. Con el modelo de handles compartidos no existe el concepto de "reconectar por sourceHandle" — la reconexión va por `onReconnect`.
 - **`onConnectEnd`** — si se suelta sobre un nodo sin validar (`!state.isValid && state.toNode`), crea la conexión igualmente. UX intuitiva.
-- **`connectionMode`** viene de `edgeConnectMode` (Loose si "free", Strict si "flow").
+- **`onReconnect`** — cuando el usuario arrastra el endpoint de un edge existente a otro nodo, actualiza `action.targetScreen` (o `errorTargetScreen` si `edge.data.isErrorPath`). Cambiar el source no se representa como un update — se ignora (el usuario puede borrar + recrear).
+- **`connectionMode = Loose`** siempre (permite source-to-source durante el drag, React Flow conecta al handle más cercano).
 - **Atajos**: Ctrl/Cmd+Z (undo), Ctrl/Cmd+Shift+Z (redo), Delete/Backspace (borra selección), Esc (sale de playback o limpia selección).
 - **Durante playback**: clicks sobre nodo/edge se ignoran. Arriba se muestra breadcrumb de `playback.trail` + botón "Salir". Al salir, `fitView` vuelve a la vista completa.
 
@@ -141,11 +151,11 @@ También exporta **`KIND_DEFAULTS`** (icon/color/label por `NodeKind`), **`SCREE
 
 Un único componente para todos los `NodeKind`. `KIND_SHELL[kind]` define `outer` (clases Tailwind con clip-path/rounded) y `tag` (etiqueta textual DB/SRV/QUEUE/EXT API/USER).
 
-- **Handles**: target siempre en `Left`; source per-acción en `Right` con `id = action.id`; `__new__` handle en `Right` para nuevas conexiones.
-- **Free mode**: añade `__new_top__`, `__new_bottom__`, `__new_left__` source handles.
-- **ViewMode**: si `"screenshot"` y hay `imageUrl`, muestra imagen + pills numeradas (handles preservados en las pills para que los edges sigan conectando).
+- **Handles**: 4 source (`src-top`, `src-right`, `src-bottom`, `src-left`) + 4 target (`tgt-top/right/bottom/left`) en los lados. Compartidos por todas las acciones de la card. Los handles de los lados "activos" (según `edgeConnectMode`) se renderizan más visibles; los otros existen en el DOM pero pequeños + transparentes (se revelan al hover para que el usuario los pueda usar manualmente). No hay handles per-action anymore — el layout engine asigna el lado.
+- **ViewMode**: si `"screenshot"` y hay `imageUrl`, muestra imagen + pills numeradas clicables (click selecciona el edge).
 - **User kind**: renderizado pill compacto especial (icono + título centrados).
-- **Playback**: botón `Play` bottom-right siempre visible a 60% opacidad. Si `playback.nodeId === id` → ring violeta animado + `<PlaybackOverlay>` montado debajo de la card.
+- **Densidad** (desde `usePreferencesStore.cardDensity`): `full` renderiza descripción + tags + lista de acciones; `compact` oculta tags + lista y muestra solo contador de acciones; `minimal` oculta también la descripción (solo header con icono+título).
+- **Playback**: botón `Play` bottom-right siempre visible a 60% opacidad. Si `playback.nodeId === id` → ring violeta estático. El `<PlaybackOverlay>` se monta a nivel canvas, no dentro del nodo.
 - **Dimming**: `filterTag` (tag no incluido) OR playback activo con este nodo no-activo → `opacity-25`.
 
 ## Edges — `src/components/ApiEdge.tsx`

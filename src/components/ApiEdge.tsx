@@ -55,6 +55,7 @@ export function ApiEdge({
   });
 
   const theme = usePreferencesStore((s) => s.theme);
+  const showEdgeLabels = usePreferencesStore((s) => s.showEdgeLabels);
   const isLight = theme === "light";
 
   // Highlight when the user hovers an action row in a card OR when the action is in playback path
@@ -67,7 +68,7 @@ export function ApiEdge({
   const hasConditions = data?.hasConditions ?? false;
   const hasEffects = data?.hasEffects ?? false;
   const isError = data?.isErrorPath ?? false;
-  const hasLabel = hasApi || hasNote || hasConditions || hasEffects;
+  const hasLabel = showEdgeLabels && (hasApi || hasNote || hasConditions || hasEffects);
 
   const strokeColor = isHighlighted
     ? "#8b5cf6"

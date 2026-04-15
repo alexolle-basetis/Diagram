@@ -381,9 +381,25 @@ function computeAutoLayout(diagram: DiagramData): Map<string, { x: number; y: nu
   return placements;
 }
 
+type Side = "top" | "right" | "bottom" | "left";
+const OPPOSITE_SIDE: Record<Side, Side> = { top: "bottom", bottom: "top", left: "right", right: "left" };
+
+/**
+ * Given source-to-target displacement and the allowed sides, pick the side of
+ * the source node that faces the target. The target simply uses the opposite.
+ * When `mode === "flow"` only horizontal sides are considered so edges keep
+ * a clean left-to-right flow; in "free" mode we also allow top/bottom.
+ */
+function pickSourceSide(dx: number, dy: number, mode: "flow" | "free"): Side {
+  if (mode === "flow") return dx >= 0 ? "right" : "left";
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? "right" : "left";
+  return dy >= 0 ? "bottom" : "top";
+}
+
 export function buildFlowElements(
   diagram: DiagramData,
-  savedPositions?: Record<string, { x: number; y: number }>
+  savedPositions?: Record<string, { x: number; y: number }>,
+  edgeConnectMode: "flow" | "free" = "flow",
 ): { nodes: Node[]; edges: Edge[] } {
   const apiByAction = new Map(
     diagram.apiCalls.map((api) => [api.actionId, api])
@@ -393,11 +409,21 @@ export function buildFlowElements(
   const auto = computeAutoLayout(diagram);
   const nodes: Node[] = [];
 
+  // Track final XY positions of each node so edges can pick sides geometrically.
+  const finalPos = new Map<string, { x: number; y: number; w: number; h: number }>();
   for (const screen of diagram.screens) {
     const saved = savedPositions?.[screen.id];
     const computed = auto.get(screen.id) ?? { x: 40, y: 40 };
     const x = saved?.x ?? computed.x;
     const y = saved?.y ?? computed.y;
+    const h = NODE_HEIGHT_BASE + screen.actions.length * ACTION_HEIGHT;
+    finalPos.set(screen.id, { x, y, w: NODE_WIDTH, h });
+  }
+
+  for (const screen of diagram.screens) {
+    const pos = finalPos.get(screen.id)!;
+    const x = pos.x;
+    const y = pos.y;
 
     const kind = (screen.kind ?? "screen") as NodeKind;
     const defaults = KIND_DEFAULTS[kind];
@@ -432,6 +458,10 @@ export function buildFlowElements(
 
   const edges: Edge[] = [];
   for (const screen of diagram.screens) {
+    const srcPos = finalPos.get(screen.id);
+    if (!srcPos) continue;
+    const srcCenter = { x: srcPos.x + srcPos.w / 2, y: srcPos.y + srcPos.h / 2 };
+
     for (const action of screen.actions) {
       const api = apiByAction.get(action.id);
       const hasConditions = (action.conditions?.length ?? 0) > 0;
@@ -443,35 +473,21 @@ export function buildFlowElements(
         ? action.effects!.map(formatEffect).join(" · ")
         : undefined;
 
-      // Skip dangling edges to non-existent screens (avoids React Flow warnings)
-      if (!screenById.has(action.targetScreen)) continue;
-
-      edges.push({
-        id: `edge-${action.id}`,
-        source: screen.id,
-        sourceHandle: action.id,
-        target: action.targetScreen,
-        type: "apiEdge",
-        data: {
-          actionId: action.id,
-          hasApi: !!api,
-          method: api?.method,
-          endpoint: api?.endpoint,
-          note: action.note,
-          isErrorPath: false,
-          hasConditions,
-          hasEffects,
-          conditionSummary,
-          effectSummary,
-        } satisfies ApiEdgeData,
-      });
-
-      if (action.errorTargetScreen && screenById.has(action.errorTargetScreen)) {
-        edges.push({
-          id: `edge-err-${action.id}`,
+      const makeEdge = (targetId: string, isErrorPath: boolean): Edge | null => {
+        if (!screenById.has(targetId)) return null;
+        const tgtPos = finalPos.get(targetId);
+        if (!tgtPos) return null;
+        const tgtCenter = { x: tgtPos.x + tgtPos.w / 2, y: tgtPos.y + tgtPos.h / 2 };
+        const dx = tgtCenter.x - srcCenter.x;
+        const dy = tgtCenter.y - srcCenter.y;
+        const srcSide = pickSourceSide(dx, dy, edgeConnectMode);
+        const tgtSide = OPPOSITE_SIDE[srcSide];
+        return {
+          id: isErrorPath ? `edge-err-${action.id}` : `edge-${action.id}`,
           source: screen.id,
-          sourceHandle: action.id,
-          target: action.errorTargetScreen,
+          sourceHandle: `src-${srcSide}`,
+          target: targetId,
+          targetHandle: `tgt-${tgtSide}`,
           type: "apiEdge",
           data: {
             actionId: action.id,
@@ -479,13 +495,20 @@ export function buildFlowElements(
             method: api?.method,
             endpoint: api?.endpoint,
             note: action.note,
-            isErrorPath: true,
+            isErrorPath,
             hasConditions,
             hasEffects,
             conditionSummary,
             effectSummary,
           } satisfies ApiEdgeData,
-        });
+        };
+      };
+
+      const main = makeEdge(action.targetScreen, false);
+      if (main) edges.push(main);
+      if (action.errorTargetScreen) {
+        const err = makeEdge(action.errorTargetScreen, true);
+        if (err) edges.push(err);
       }
     }
   }

@@ -2,12 +2,12 @@ import {
   Plus, Undo2, Redo2, Download, Upload, Image, PanelLeftClose, PanelLeftOpen,
   Search, AlertTriangle, CheckCircle2, Tag, Share2, Check, ArrowLeft,
   Cloud, CloudOff, Loader2, LogOut, Wifi, LayoutGrid, Sparkles, Sun, Moon, Spline,
-  BookOpen, Move, ArrowRightLeft,
+  BookOpen, Move, ArrowRightLeft, Eye, EyeOff, Rows3, GitBranch,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { useDiagramStore } from "../store/useDiagramStore";
 import { useAuthStore } from "../store/useAuthStore";
-import { usePreferencesStore, type EdgeStyle } from "../store/usePreferencesStore";
+import { usePreferencesStore, type EdgeStyle, type CardDensity } from "../store/usePreferencesStore";
 import { downloadJson, exportCanvasAsPng } from "../utils/exportUtils";
 import { buildShareUrl } from "../utils/urlShare";
 import { renameDiagram } from "../lib/diagramService";
@@ -47,6 +47,12 @@ export function Toolbar({ showAiPanel, onToggleAiPanel }: { showAiPanel: boolean
   const setEdgeStyle = usePreferencesStore((s) => s.setEdgeStyle);
   const edgeConnectMode = usePreferencesStore((s) => s.edgeConnectMode);
   const setEdgeConnectMode = usePreferencesStore((s) => s.setEdgeConnectMode);
+  const cardDensity = usePreferencesStore((s) => s.cardDensity);
+  const setCardDensity = usePreferencesStore((s) => s.setCardDensity);
+  const showEdgeLabels = usePreferencesStore((s) => s.showEdgeLabels);
+  const setShowEdgeLabels = usePreferencesStore((s) => s.setShowEdgeLabels);
+  const showEdges = usePreferencesStore((s) => s.showEdges);
+  const setShowEdges = usePreferencesStore((s) => s.setShowEdges);
   const openApi = useDiagramStore((s) => s.diagram.openApi);
   const setOpenApiSpec = useDiagramStore((s) => s.setOpenApiSpec);
 
@@ -54,6 +60,7 @@ export function Toolbar({ showAiPanel, onToggleAiPanel }: { showAiPanel: boolean
   const [shared, setShared] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [openApiDialogOpen, setOpenApiDialogOpen] = useState(false);
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
 
   const progress = getProgress();
   const tags = getAllTags();
@@ -214,6 +221,72 @@ export function Toolbar({ showAiPanel, onToggleAiPanel }: { showAiPanel: boolean
         tooltip={openApi ? `OpenAPI: ${openApi.title ?? "cargado"}` : "Cargar OpenAPI"}
         onClick={() => setOpenApiDialogOpen(true)}
       />
+
+      {/* View options (density, labels, edges) */}
+      <div className="relative">
+        <ToolbarButton
+          icon={<Eye className={`w-4 h-4 ${cardDensity !== "full" || !showEdgeLabels || !showEdges ? "text-violet-400" : ""}`} />}
+          tooltip="Opciones de visualización"
+          onClick={() => setViewMenuOpen((v) => !v)}
+        />
+        {viewMenuOpen && (
+          <>
+            {/* click-away overlay */}
+            <div className="fixed inset-0 z-40" onClick={() => setViewMenuOpen(false)} />
+            <div className="absolute top-full left-0 mt-1 z-50 w-[240px] bg-slate-900 border border-slate-700 rounded-lg shadow-2xl p-2 space-y-2">
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1 flex items-center gap-1">
+                  <Rows3 className="w-3 h-3" /> Densidad de tarjeta
+                </div>
+                <div className="flex gap-1">
+                  {(["full", "compact", "minimal"] as CardDensity[]).map((d) => {
+                    const label = d === "full" ? "Completo" : d === "compact" ? "Compacto" : "Mínimo";
+                    const active = cardDensity === d;
+                    return (
+                      <button
+                        key={d}
+                        onClick={() => setCardDensity(d)}
+                        className={`flex-1 text-[11px] py-1 rounded-md border transition-all ${
+                          active
+                            ? "border-violet-500 bg-violet-500/10 text-violet-300"
+                            : "border-slate-700 bg-slate-800 text-slate-400 hover:border-slate-500 hover:text-slate-200"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowEdgeLabels(!showEdgeLabels)}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-slate-800 transition-colors text-left"
+              >
+                {showEdgeLabels
+                  ? <Eye className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+                  : <EyeOff className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                }
+                <span className="flex-1 text-xs text-slate-200">Labels de edges</span>
+                <span className={`text-[10px] ${showEdgeLabels ? "text-violet-300" : "text-slate-500"}`}>
+                  {showEdgeLabels ? "Visibles" : "Ocultos"}
+                </span>
+              </button>
+
+              <button
+                onClick={() => setShowEdges(!showEdges)}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-slate-800 transition-colors text-left"
+              >
+                <GitBranch className={`w-3.5 h-3.5 shrink-0 ${showEdges ? "text-violet-400" : "text-slate-500"}`} />
+                <span className="flex-1 text-xs text-slate-200">Conexiones</span>
+                <span className={`text-[10px] ${showEdges ? "text-violet-300" : "text-slate-500"}`}>
+                  {showEdges ? "Visibles" : "Ocultas"}
+                </span>
+              </button>
+            </div>
+          </>
+        )}
+      </div>
 
       {/* Theme toggle */}
       <ToolbarButton

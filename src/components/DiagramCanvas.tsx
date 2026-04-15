@@ -16,6 +16,8 @@ import {
   type OnConnect,
   type OnConnectEnd,
   type OnSelectionChangeFunc,
+  type OnReconnect,
+  type Edge,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { LogOut, ChevronRight } from "lucide-react";
@@ -51,12 +53,13 @@ export function DiagramCanvas() {
   const stepBackPlayback = useDiagramStore((s) => s.stepBackPlayback);
   const theme = usePreferencesStore((s) => s.theme);
   const edgeConnectMode = usePreferencesStore((s) => s.edgeConnectMode);
+  const showEdges = usePreferencesStore((s) => s.showEdges);
   const isLight = theme === "light";
 
-  const { nodes: initialNodes, edges: initialEdges } = useMemo(
-    () => buildFlowElements(diagram, nodePositions),
-    [diagram, nodePositions]
-  );
+  const { nodes: initialNodes, edges: initialEdges } = useMemo(() => {
+    const built = buildFlowElements(diagram, nodePositions, edgeConnectMode);
+    return { nodes: built.nodes, edges: showEdges ? built.edges : [] };
+  }, [diagram, nodePositions, edgeConnectMode, showEdges]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
@@ -65,10 +68,10 @@ export function DiagramCanvas() {
 
   // Sync when diagram data changes
   useEffect(() => {
-    const { nodes: newNodes, edges: newEdges } = buildFlowElements(diagram, nodePositions);
-    setNodes(newNodes);
-    setEdges(newEdges);
-  }, [diagram, nodePositions, setNodes, setEdges]);
+    const built = buildFlowElements(diagram, nodePositions, edgeConnectMode);
+    setNodes(built.nodes);
+    setEdges(showEdges ? built.edges : []);
+  }, [diagram, nodePositions, edgeConnectMode, showEdges, setNodes, setEdges]);
 
   // Fit view only on first load
   useEffect(() => {
@@ -170,71 +173,66 @@ export function DiagramCanvas() {
     [updateNodePosition]
   );
 
-  // Handle new connections via drag-to-connect
+  // Any drag-to-connect creates a NEW action. Existing edges are reconnected
+  // via onReconnect (drag the edge endpoint) instead. Side handles (src-*) are
+  // shared across all actions on a card, so we always create fresh.
   const onConnect: OnConnect = useCallback(
     (connection) => {
       if (!connection.source || !connection.target) return;
-      const sourceHandle = connection.sourceHandle ?? "";
-      const isNewHandle = sourceHandle.startsWith("__new");
-
-      // Prevent self-connections when creating a new action
-      if (connection.source === connection.target && isNewHandle) return;
-
-      if (isNewHandle) {
-        const actionId = addAction(connection.source, connection.target);
-        setSelection({
-          kind: "edge",
-          actionId,
-          sourceScreenId: connection.source,
-          targetScreenId: connection.target,
-        });
-      } else if (sourceHandle) {
-        updateAction(connection.source, sourceHandle, {
-          targetScreen: connection.target,
-        });
-        setSelection({
-          kind: "edge",
-          actionId: sourceHandle,
-          sourceScreenId: connection.source,
-          targetScreenId: connection.target,
-        });
-      }
+      if (connection.source === connection.target) return;
+      const actionId = addAction(connection.source, connection.target);
+      setSelection({
+        kind: "edge",
+        actionId,
+        sourceScreenId: connection.source,
+        targetScreenId: connection.target,
+      });
     },
-    [addAction, updateAction, setSelection]
+    [addAction, setSelection]
   );
 
-  // Intuitive drop: if the user ends a connection NOT on a handle but over a node,
-  // create the connection to that node anyway.
+  // Intuitive drop: if the user drops on a node (not on a handle), still create
+  // the connection. Uses the dropped-on node as target.
   const onConnectEnd: OnConnectEnd = useCallback(
     (_event, state) => {
       if (state.isValid) return; // onConnect already handled it
       const sourceId = state.fromNode?.id;
       const toNode = state.toNode;
-      if (!sourceId || !toNode) return;
-      if (sourceId === toNode.id) return;
+      if (!sourceId || !toNode || sourceId === toNode.id) return;
+      const actionId = addAction(sourceId, toNode.id);
+      setSelection({
+        kind: "edge",
+        actionId,
+        sourceScreenId: sourceId,
+        targetScreenId: toNode.id,
+      });
+    },
+    [addAction, setSelection]
+  );
 
-      const sourceHandle = state.fromHandle?.id ?? "";
-      const isNewHandle = sourceHandle.startsWith("__new") || !sourceHandle;
-
-      if (isNewHandle) {
-        const actionId = addAction(sourceId, toNode.id);
-        setSelection({
-          kind: "edge",
-          actionId,
-          sourceScreenId: sourceId,
-          targetScreenId: toNode.id,
-        });
+  // Reconnecting an existing edge (user drags its endpoint to a new target).
+  // We update the action's `targetScreen` (or `errorTargetScreen` for error
+  // paths) rather than create a new edge.
+  const onReconnect: OnReconnect = useCallback(
+    (oldEdge: Edge, newConnection) => {
+      if (!newConnection.source || !newConnection.target) return;
+      const actionId = (oldEdge.data as { actionId?: string } | undefined)?.actionId;
+      const isErrorPath = (oldEdge.data as { isErrorPath?: boolean } | undefined)?.isErrorPath;
+      if (!actionId) return;
+      const sourceId = oldEdge.source;
+      if (newConnection.source !== sourceId) {
+        // Moving the source end to a different node isn't representable as a
+        // single update (actions belong to their source screen). Ignore to
+        // avoid corrupting data — user can delete + recreate instead.
+        return;
+      }
+      if (isErrorPath) {
+        updateAction(sourceId, actionId, { errorTargetScreen: newConnection.target });
       } else {
-        updateAction(sourceId, sourceHandle, { targetScreen: toNode.id });
-        setSelection({
-          kind: "edge",
-          actionId: sourceHandle,
-          sourceScreenId: sourceId,
-          targetScreenId: toNode.id,
-        });
+        updateAction(sourceId, actionId, { targetScreen: newConnection.target });
       }
     },
-    [addAction, updateAction, setSelection]
+    [updateAction]
   );
 
   const handleStepBack = useCallback(
@@ -266,9 +264,10 @@ export function DiagramCanvas() {
         onNodeDragStop={onNodeDragStop}
         onConnect={onConnect}
         onConnectEnd={onConnectEnd}
+        onReconnect={onReconnect}
         onSelectionChange={onSelectionChange}
         multiSelectionKeyCode={["Shift", "Meta", "Control"]}
-        connectionMode={edgeConnectMode === "free" ? ConnectionMode.Loose : ConnectionMode.Strict}
+        connectionMode={ConnectionMode.Loose}
 
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
