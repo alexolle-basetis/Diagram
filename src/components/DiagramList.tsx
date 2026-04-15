@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Plus, FileText, Trash2, LogOut, GitBranch, Clock, Users } from "lucide-react";
+import { Plus, FileText, Trash2, LogOut, GitBranch, Clock, Users, Lock, Globe } from "lucide-react";
 import { useAuthStore } from "../store/useAuthStore";
 import {
   listMyDiagrams,
@@ -136,6 +136,12 @@ export function DiagramList({ onOpen }: Props) {
                 <div className="text-sm font-medium text-slate-200 truncate">{d.name}</div>
                 <div className="flex items-center gap-3 text-xs text-slate-500 mt-0.5">
                   <span>{d.screenCount} pantallas</span>
+                  <span className={`flex items-center gap-1 ${d.isPublic ? "text-emerald-400/80" : "text-slate-500"}`}
+                    title={d.isPublic ? "Público — visible para cualquiera con el enlace" : "Privado — solo tú e invitados"}
+                  >
+                    {d.isPublic ? <Globe className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
+                    {d.isPublic ? "Público" : "Privado"}
+                  </span>
                   <span className="flex items-center gap-1">
                     <Clock className="w-3 h-3" />
                     {formatDate(d.updated_at)}

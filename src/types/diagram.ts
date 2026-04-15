@@ -146,6 +146,7 @@ export interface DiagramData {
 export type SelectionType =
   | { kind: "none" }
   | { kind: "screen"; screenId: string }
+  | { kind: "multi-screen"; screenIds: string[] }
   | { kind: "edge"; actionId: string; sourceScreenId: string; targetScreenId: string };
 
 export interface ValidationError {

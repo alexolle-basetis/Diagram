@@ -7,12 +7,13 @@ export interface DiagramSummary {
   updated_at: string;
   created_at: string;
   screenCount: number;
+  isPublic: boolean;
 }
 
 export async function listMyDiagrams(userId: string): Promise<DiagramSummary[]> {
   const { data, error } = await supabase
     .from("diagrams")
-    .select("id, name, data, updated_at, created_at")
+    .select("id, name, data, updated_at, created_at, is_public")
     .eq("owner_id", userId)
     .order("updated_at", { ascending: false });
 
@@ -24,6 +25,7 @@ export async function listMyDiagrams(userId: string): Promise<DiagramSummary[]> 
     updated_at: row.updated_at,
     created_at: row.created_at,
     screenCount: (row.data as DiagramData)?.screens?.length ?? 0,
+    isPublic: !!row.is_public,
   }));
 }
 

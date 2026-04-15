@@ -19,10 +19,15 @@ const localMode = !isSupabaseConfigured || window.location.hash === "#local";
 function EditorView({ diagramId }: { diagramId: string | null }) {
   const showJsonPanel = useDiagramStore((s) => s.showJsonPanel);
   const setSaveStatus = useDiagramStore((s) => s.setSaveStatus);
+  const setCloudDiagram = useDiagramStore((s) => s.setCloudDiagram);
   const [syncReady, setSyncReady] = useState(!diagramId);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showAiPanel, setShowAiPanel] = useState(false);
 
-  const onLoaded = useCallback(() => setSyncReady(true), []);
+  const onLoaded = useCallback((result: { ok: true } | { ok: false; error: string }) => {
+    if (!result.ok) setLoadError(result.error);
+    setSyncReady(true);
+  }, []);
   const onSaveStatusChange = useCallback(
     (status: "saved" | "saving" | "unsaved" | "error") => setSaveStatus(status),
     [setSaveStatus]
@@ -38,6 +43,28 @@ function EditorView({ diagramId }: { diagramId: string | null }) {
     return (
       <div className="flex items-center justify-center h-screen bg-slate-950 text-slate-400 text-sm">
         Cargando diagrama...
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen bg-slate-950 text-slate-300 gap-4 px-6">
+        <div className="text-5xl">🔒</div>
+        <h1 className="text-lg font-semibold">Acceso denegado</h1>
+        <p className="text-sm text-slate-500 max-w-md text-center">{loadError}</p>
+        <button
+          onClick={() => {
+            const url = new URL(window.location.href);
+            url.searchParams.delete("id");
+            window.history.pushState(null, "", url.pathname);
+            setCloudDiagram(null, "");
+            setLoadError(null);
+          }}
+          className="mt-2 px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium rounded-lg transition-colors"
+        >
+          Volver a mis diagramas
+        </button>
       </div>
     );
   }

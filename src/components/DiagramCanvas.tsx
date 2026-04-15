@@ -15,6 +15,7 @@ import {
   type NodeMouseHandler,
   type OnConnect,
   type OnConnectEnd,
+  type OnSelectionChangeFunc,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { LogOut, ChevronRight } from "lucide-react";
@@ -149,6 +150,22 @@ export function DiagramCanvas() {
     clearSelection();
   }, [clearSelection]);
 
+  // Multi-selection: when React Flow reports >1 selected nodes (Shift+click or
+  // marquee), promote the store selection to "multi-screen" mode so the
+  // DetailPanel can offer bulk-edit. Single selection stays as-is to keep the
+  // existing per-node UX.
+  const onSelectionChange: OnSelectionChangeFunc = useCallback(
+    ({ nodes: selectedNodes }) => {
+      if (useDiagramStore.getState().playback.active) return;
+      if (selectedNodes.length <= 1) return; // single / none handled by onNodeClick / onPaneClick
+      setSelection({
+        kind: "multi-screen",
+        screenIds: selectedNodes.map((n) => n.id),
+      });
+    },
+    [setSelection]
+  );
+
   // Persist positions on drag
   const onNodeDragStop: OnNodeDrag = useCallback(
     (_event, node) => {
@@ -253,6 +270,8 @@ export function DiagramCanvas() {
         onNodeDragStop={onNodeDragStop}
         onConnect={onConnect}
         onConnectEnd={onConnectEnd}
+        onSelectionChange={onSelectionChange}
+        multiSelectionKeyCode={["Shift", "Meta", "Control"]}
         connectionMode={edgeConnectMode === "free" ? ConnectionMode.Loose : ConnectionMode.Strict}
 
         nodeTypes={nodeTypes}

@@ -2,7 +2,8 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import {
   X, Monitor, Globe, ArrowRight, Plus, Trash2, Copy, Check,
   AlertCircle, Upload, ImageIcon, Pencil, Eye, ChevronDown, ChevronRight,
-  BookOpen, Lock, Sparkles, Variable as VariableIcon,
+  BookOpen, Lock, Sparkles, Variable as VariableIcon, CopyCheck,
+  Info, Palette, Zap as ZapIcon,
 } from "lucide-react";
 import { useDiagramStore } from "../store/useDiagramStore";
 import { generateCurl } from "../utils/exportUtils";
@@ -26,7 +27,31 @@ function loadWidth(): number {
 export function DetailPanel() {
   const selection = useDiagramStore((s) => s.selection);
   const clearSelection = useDiagramStore((s) => s.clearSelection);
+  const deleteScreen = useDiagramStore((s) => s.deleteScreen);
+  const deleteAction = useDiagramStore((s) => s.deleteAction);
+  const diagram = useDiagramStore((s) => s.diagram);
   const [width, setWidth] = useState(loadWidth);
+
+  const handleDelete = () => {
+    if (selection.kind === "screen") {
+      if (confirm("¿Eliminar esta pantalla y todas sus conexiones?")) {
+        deleteScreen(selection.screenId);
+      }
+    } else if (selection.kind === "multi-screen") {
+      if (confirm(`¿Eliminar las ${selection.screenIds.length} pantallas seleccionadas y todas sus conexiones?`)) {
+        for (const id of selection.screenIds) deleteScreen(id);
+        clearSelection();
+      }
+    } else if (selection.kind === "edge") {
+      // Resolve source from the actionId in case sourceScreenId was a placeholder
+      const source = selection.sourceScreenId
+        || diagram.screens.find((s) => s.actions.some((a) => a.id === selection.actionId))?.id;
+      if (!source) return;
+      if (confirm("¿Eliminar esta conexión?")) {
+        deleteAction(source, selection.actionId);
+      }
+    }
+  };
 
   // Persist width
   useEffect(() => {
@@ -77,26 +102,43 @@ export function DetailPanel() {
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700 bg-slate-800/50 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            {selection.kind === "screen" ? (
-              <Monitor className="w-4 h-4 text-violet-400 shrink-0" />
-            ) : (
-              <Globe className="w-4 h-4 text-amber-400 shrink-0" />
-            )}
+            {selection.kind === "screen" && <Monitor className="w-4 h-4 text-violet-400 shrink-0" />}
+            {selection.kind === "multi-screen" && <CopyCheck className="w-4 h-4 text-violet-400 shrink-0" />}
+            {selection.kind === "edge" && <Globe className="w-4 h-4 text-amber-400 shrink-0" />}
             <span className="text-sm font-semibold text-slate-100 truncate">
-              {selection.kind === "screen" ? "Pantalla" : "Conexión"}
+              {selection.kind === "screen" && "Pantalla"}
+              {selection.kind === "multi-screen" && `${selection.screenIds.length} pantallas seleccionadas`}
+              {selection.kind === "edge" && "Conexión"}
             </span>
           </div>
-          <button
-            onClick={clearSelection}
-            className="p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-slate-200 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleDelete}
+              className="p-1 rounded hover:bg-red-500/15 text-slate-400 hover:text-red-400 transition-colors"
+              title={
+                selection.kind === "edge" ? "Eliminar conexión" :
+                selection.kind === "multi-screen" ? "Eliminar las seleccionadas" :
+                "Eliminar pantalla"
+              }
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+            <button
+              onClick={clearSelection}
+              className="p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-slate-200 transition-colors"
+              title="Cerrar"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {selection.kind === "screen" && <ScreenEditor screenId={selection.screenId} />}
+          {selection.kind === "multi-screen" && (
+            <MultiScreenEditor screenIds={selection.screenIds} />
+          )}
           {selection.kind === "edge" && (
             <EdgeEditor
               actionId={selection.actionId}
@@ -114,7 +156,6 @@ export function DetailPanel() {
 function ScreenEditor({ screenId }: { screenId: string }) {
   const screen = useDiagramStore((s) => s.getScreen(screenId));
   const updateScreen = useDiagramStore((s) => s.updateScreen);
-  const deleteScreen = useDiagramStore((s) => s.deleteScreen);
   const addAction = useDiagramStore((s) => s.addAction);
   const updateAction = useDiagramStore((s) => s.updateAction);
   const deleteAction = useDiagramStore((s) => s.deleteAction);
@@ -124,6 +165,7 @@ function ScreenEditor({ screenId }: { screenId: string }) {
   const setApiCall = useDiagramStore((s) => s.setApiCall);
   const setScreenOpenApi = useDiagramStore((s) => s.setScreenOpenApi);
   const [openApiDialogOpen, setOpenApiDialogOpen] = useState(false);
+  const [screenTab, setScreenTab] = useState<"info" | "style" | "behavior" | "actions">("info");
 
   if (!screen) return <p className="text-sm text-slate-500">Pantalla no encontrada</p>;
 
@@ -141,213 +183,209 @@ function ScreenEditor({ screenId }: { screenId: string }) {
 
   return (
     <>
-      {/* Kind selector */}
-      <Field label="Tipo de nodo">
-        <div className="grid grid-cols-3 gap-1.5">
-          {(Object.keys(KIND_DEFAULTS) as NodeKind[]).map((k) => {
-            const def = KIND_DEFAULTS[k];
-            const Ic = SCREEN_ICONS[def.icon].icon;
-            const active = currentKind === k;
-            return (
-              <button
-                key={k}
-                onClick={() => handleKindChange(k)}
-                className={`flex flex-col items-center gap-1 py-2 rounded-md border transition-all text-[10px] ${
-                  active
-                    ? "border-violet-500 bg-violet-500/10 text-violet-300"
-                    : "border-slate-700 bg-slate-800 text-slate-400 hover:border-slate-500 hover:text-slate-200"
-                }`}
-                title={def.label}
-              >
-                <Ic className="w-4 h-4" />
-                <span className="truncate w-full px-1 text-center">{def.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </Field>
-
-      {/* Title */}
-      <Field label="Título">
-        <input
-          value={screen.title}
-          onChange={(e) => updateScreen(screenId, { title: e.target.value })}
-          className="input-field"
-        />
-      </Field>
-
-      {/* Description */}
-      <MarkdownField
-        label="Descripción"
-        value={screen.description}
-        onChange={(v) => updateScreen(screenId, { description: v })}
-        placeholder="Descripción de la pantalla..."
-        rows={2}
+      {/* Title — always visible (no tab) for quick edit */}
+      <input
+        value={screen.title}
+        onChange={(e) => updateScreen(screenId, { title: e.target.value })}
+        className="input-field !py-1.5 text-sm font-semibold text-slate-100"
+        placeholder="Título"
       />
 
-      {/* OpenAPI per-node (only for external-api kind) */}
-      {currentKind === "external-api" && (
-        <Field label="OpenAPI de este nodo">
-          <button
-            onClick={() => setOpenApiDialogOpen(true)}
-            className={`flex items-center gap-2 w-full py-2 px-3 text-xs rounded-md border transition-colors ${
-              screen.openApi
-                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
-                : "border-slate-700 bg-slate-800 text-slate-400 hover:border-slate-500 hover:text-slate-200"
-            }`}
-          >
-            <BookOpen className="w-3.5 h-3.5" />
-            {screen.openApi
-              ? <span className="truncate flex-1 text-left">{screen.openApi.title ?? "Spec cargada"}</span>
-              : <span>Cargar OpenAPI para este nodo</span>
-            }
-          </button>
-          {openApiDialogOpen && (
-            <OpenApiDialog
-              open={openApiDialogOpen}
-              onClose={() => setOpenApiDialogOpen(false)}
-              value={screen.openApi}
-              onChange={(ref) => setScreenOpenApi(screenId, ref)}
-              title={`OpenAPI de "${screen.title}"`}
-            />
-          )}
-        </Field>
+      <TabBar
+        active={screenTab}
+        onChange={setScreenTab}
+        tabs={[
+          { id: "info",       label: "Info",     icon: Info },
+          { id: "style",      label: "Estética", icon: Palette },
+          { id: "behavior",   label: "Variables", icon: VariableIcon, badge: screen.variables?.length },
+          { id: "actions",    label: "Acciones", icon: ZapIcon, badge: screen.actions.length },
+        ]}
+      />
+
+      {screenTab === "info" && (
+        <>
+          <MarkdownField
+            label="Descripción"
+            value={screen.description}
+            onChange={(v) => updateScreen(screenId, { description: v })}
+            placeholder="Descripción de la pantalla..."
+            rows={2}
+          />
+          <Field label="Estado">
+            <div className="flex gap-1.5 flex-wrap">
+              {(Object.keys(STATUS_COLORS) as ScreenStatus[]).map((status) => {
+                const style = STATUS_COLORS[status];
+                const active = screen.status === status || (!screen.status && status === "pending");
+                return (
+                  <button
+                    key={status}
+                    onClick={() => updateScreen(screenId, { status })}
+                    className={`text-[11px] font-medium px-2.5 py-1 rounded-md border transition-all ${
+                      active ? `${style.badge} border-current` : "text-slate-500 bg-slate-800 border-slate-700 hover:border-slate-500"
+                    }`}
+                  >
+                    {style.text}
+                  </button>
+                );
+              })}
+            </div>
+          </Field>
+          <Field label="Tags">
+            <TagEditor tags={screen.tags ?? []} onChange={(tags) => updateScreen(screenId, { tags })} />
+          </Field>
+          <MarkdownField
+            label="Documentación"
+            value={screen.docs ?? ""}
+            onChange={(v) => updateScreen(screenId, { docs: v })}
+            placeholder="Soporta **Markdown**: títulos, listas, código..."
+            rows={14}
+            minHeight={300}
+          />
+        </>
       )}
 
-      {/* Status */}
-      <Field label="Estado">
-        <div className="flex gap-1.5 flex-wrap">
-          {(Object.keys(STATUS_COLORS) as ScreenStatus[]).map((status) => {
-            const style = STATUS_COLORS[status];
-            const active = screen.status === status || (!screen.status && status === "pending");
-            return (
-              <button
-                key={status}
-                onClick={() => updateScreen(screenId, { status })}
-                className={`
-                  text-[11px] font-medium px-2.5 py-1 rounded-md border transition-all
-                  ${active ? `${style.badge} border-current` : "text-slate-500 bg-slate-800 border-slate-700 hover:border-slate-500"}
-                `}
-              >
-                {style.text}
-              </button>
-            );
-          })}
-        </div>
-      </Field>
-
-      {/* Tags */}
-      <Field label="Tags">
-        <TagEditor
-          tags={screen.tags ?? []}
-          onChange={(tags) => updateScreen(screenId, { tags })}
-        />
-      </Field>
-
-      {/* Docs */}
-      <MarkdownField
-        label="Documentación"
-        value={screen.docs ?? ""}
-        onChange={(v) => updateScreen(screenId, { docs: v })}
-        placeholder="Soporta **Markdown**: títulos, listas, código..."
-        rows={6}
-      />
-
-      {/* Color */}
-      <Field label="Color">
-        <div className="flex gap-1.5 flex-wrap">
-          {(Object.keys(SCREEN_COLORS) as ScreenColor[]).map((c) => {
-            const active = (screen.color ?? "slate") === c;
-            return (
-              <button
-                key={c}
-                onClick={() => updateScreen(screenId, { color: c })}
-                className={`w-7 h-7 rounded-md border-2 transition-all ${SCREEN_COLORS[c].header} ${
-                  active ? "border-white scale-110" : "border-transparent hover:border-slate-500"
-                }`}
-                title={c}
-              />
-            );
-          })}
-        </div>
-      </Field>
-
-      {/* Icon */}
-      <Field label="Icono">
-        <div className="flex gap-1 flex-wrap">
-          {(Object.keys(SCREEN_ICONS) as ScreenIcon[]).map((key) => {
-            const { icon: Ic, label } = SCREEN_ICONS[key];
-            const active = (screen.icon ?? "monitor") === key;
-            return (
-              <button
-                key={key}
-                onClick={() => updateScreen(screenId, { icon: key })}
-                className={`p-1.5 rounded-md border transition-all ${
-                  active
-                    ? "border-violet-500 bg-violet-500/20 text-violet-300"
-                    : "border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-800"
-                }`}
-                title={label}
-              >
-                <Ic className="w-3.5 h-3.5" />
-              </button>
-            );
-          })}
-        </div>
-      </Field>
-
-      {/* Image */}
-      <Field label="Imagen">
-        <ImageUploader
-          imageUrl={screen.imageUrl}
-          onChange={(url) => updateScreen(screenId, { imageUrl: url || undefined })}
-        />
-      </Field>
-
-      {/* Variables */}
-      <VariablesEditor
-        variables={screen.variables ?? []}
-        onChange={(vars) => updateScreen(screenId, { variables: vars.length > 0 ? vars : undefined })}
-      />
-
-      {/* Actions */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Acciones ({screen.actions.length})
-          </h3>
-          <button
-            onClick={() => addAction(screenId)}
-            className="flex items-center gap-1 text-xs text-violet-400 hover:text-violet-300 transition-colors"
-          >
-            <Plus className="w-3 h-3" /> Añadir
-          </button>
-        </div>
-        <div className="space-y-2">
-          {screen.actions.map((action) => (
-            <CollapsibleAction
-              key={action.id}
-              action={action}
-              screenId={screenId}
-              screenTitle={screen.title}
-              screenOptions={screenOptions}
-              allScreens={diagram.screens}
-              hasApi={!!getApiCall(action.id)}
-              onUpdate={(patch) => updateAction(screenId, action.id, patch)}
-              onDelete={() => deleteAction(screenId, action.id)}
-              onAddApi={() => setApiCall({ actionId: action.id, method: "GET", endpoint: "/api/v1/" })}
-              onViewApi={() => setSelection({ kind: "edge", actionId: action.id, sourceScreenId: screenId, targetScreenId: action.targetScreen })}
+      {screenTab === "style" && (
+        <>
+          <Field label="Tipo de nodo">
+            <div className="grid grid-cols-3 gap-1.5">
+              {(Object.keys(KIND_DEFAULTS) as NodeKind[]).map((k) => {
+                const def = KIND_DEFAULTS[k];
+                const Ic = SCREEN_ICONS[def.icon].icon;
+                const active = currentKind === k;
+                return (
+                  <button
+                    key={k}
+                    onClick={() => handleKindChange(k)}
+                    className={`flex flex-col items-center gap-1 py-2 rounded-md border transition-all text-[10px] ${
+                      active
+                        ? "border-violet-500 bg-violet-500/10 text-violet-300"
+                        : "border-slate-700 bg-slate-800 text-slate-400 hover:border-slate-500 hover:text-slate-200"
+                    }`}
+                    title={def.label}
+                  >
+                    <Ic className="w-4 h-4" />
+                    <span className="truncate w-full px-1 text-center">{def.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </Field>
+          <Field label="Color">
+            <div className="flex gap-1.5 flex-wrap">
+              {(Object.keys(SCREEN_COLORS) as ScreenColor[]).map((c) => {
+                const active = (screen.color ?? "slate") === c;
+                return (
+                  <button
+                    key={c}
+                    onClick={() => updateScreen(screenId, { color: c })}
+                    className={`w-7 h-7 rounded-md border-2 transition-all ${SCREEN_COLORS[c].header} ${
+                      active ? "border-white scale-110" : "border-transparent hover:border-slate-500"
+                    }`}
+                    title={c}
+                  />
+                );
+              })}
+            </div>
+          </Field>
+          <Field label="Icono">
+            <div className="flex gap-1 flex-wrap">
+              {(Object.keys(SCREEN_ICONS) as ScreenIcon[]).map((key) => {
+                const { icon: Ic, label } = SCREEN_ICONS[key];
+                const active = (screen.icon ?? "monitor") === key;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => updateScreen(screenId, { icon: key })}
+                    className={`p-1.5 rounded-md border transition-all ${
+                      active
+                        ? "border-violet-500 bg-violet-500/20 text-violet-300"
+                        : "border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-800"
+                    }`}
+                    title={label}
+                  >
+                    <Ic className="w-3.5 h-3.5" />
+                  </button>
+                );
+              })}
+            </div>
+          </Field>
+          <Field label="Imagen">
+            <ImageUploader
+              imageUrl={screen.imageUrl}
+              onChange={(url) => updateScreen(screenId, { imageUrl: url || undefined })}
             />
-          ))}
-        </div>
-      </div>
+          </Field>
+        </>
+      )}
 
-      <button
-        onClick={() => { if (confirm("¿Eliminar esta pantalla y todas sus conexiones?")) deleteScreen(screenId); }}
-        className="flex items-center justify-center gap-2 w-full py-2 mt-4 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-colors"
-      >
-        <Trash2 className="w-3.5 h-3.5" /> Eliminar pantalla
-      </button>
+      {screenTab === "behavior" && (
+        <>
+          {currentKind === "external-api" && (
+            <Field label="OpenAPI de este nodo">
+              <button
+                onClick={() => setOpenApiDialogOpen(true)}
+                className={`flex items-center gap-2 w-full py-2 px-3 text-xs rounded-md border transition-colors ${
+                  screen.openApi
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                    : "border-slate-700 bg-slate-800 text-slate-400 hover:border-slate-500 hover:text-slate-200"
+                }`}
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                {screen.openApi
+                  ? <span className="truncate flex-1 text-left">{screen.openApi.title ?? "Spec cargada"}</span>
+                  : <span>Cargar OpenAPI para este nodo</span>
+                }
+              </button>
+              {openApiDialogOpen && (
+                <OpenApiDialog
+                  open={openApiDialogOpen}
+                  onClose={() => setOpenApiDialogOpen(false)}
+                  value={screen.openApi}
+                  onChange={(ref) => setScreenOpenApi(screenId, ref)}
+                  title={`OpenAPI de "${screen.title}"`}
+                />
+              )}
+            </Field>
+          )}
+          <VariablesEditor
+            variables={screen.variables ?? []}
+            onChange={(vars) => updateScreen(screenId, { variables: vars.length > 0 ? vars : undefined })}
+          />
+        </>
+      )}
+
+      {screenTab === "actions" && (
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+              {screen.actions.length === 0 ? "Sin acciones" : `${screen.actions.length} accion${screen.actions.length === 1 ? "" : "es"}`}
+            </h3>
+            <button
+              onClick={() => addAction(screenId)}
+              className="flex items-center gap-1 text-xs text-violet-400 hover:text-violet-300 transition-colors"
+            >
+              <Plus className="w-3 h-3" /> Añadir
+            </button>
+          </div>
+          <div className="space-y-2">
+            {screen.actions.map((action) => (
+              <CollapsibleAction
+                key={action.id}
+                action={action}
+                screenId={screenId}
+                screenTitle={screen.title}
+                screenOptions={screenOptions}
+                allScreens={diagram.screens}
+                hasApi={!!getApiCall(action.id)}
+                onUpdate={(patch) => updateAction(screenId, action.id, patch)}
+                onDelete={() => deleteAction(screenId, action.id)}
+                onAddApi={() => setApiCall({ actionId: action.id, method: "GET", endpoint: "/api/v1/" })}
+                onViewApi={() => setSelection({ kind: "edge", actionId: action.id, sourceScreenId: screenId, targetScreenId: action.targetScreen })}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -363,17 +401,20 @@ function EdgeEditor({
   targetScreenId: string;
 }) {
   const sourceScreen = useDiagramStore((s) => s.getScreen(sourceScreenId));
-  const targetScreen = useDiagramStore((s) => s.getScreen(targetScreenId));
   const diagram = useDiagramStore((s) => s.diagram);
+  // The action selected from a screen-card row may not include targetScreenId — resolve from the action itself.
+  const actionForTarget = sourceScreen?.actions.find((a) => a.id === actionId);
+  const resolvedTargetId = targetScreenId || actionForTarget?.targetScreen || "";
+  const targetScreen = useDiagramStore((s) => s.getScreen(resolvedTargetId));
   const apiCall = useDiagramStore((s) => s.getApiCall(actionId));
   const updateApiCall = useDiagramStore((s) => s.updateApiCall);
   const setApiCall = useDiagramStore((s) => s.setApiCall);
   const deleteApiCall = useDiagramStore((s) => s.deleteApiCall);
-  const deleteAction = useDiagramStore((s) => s.deleteAction);
   const updateAction = useDiagramStore((s) => s.updateAction);
   const action = sourceScreen?.actions.find((a) => a.id === actionId);
   const [copiedCurl, setCopiedCurl] = useState(false);
   const [activeTab, setActiveTab] = useState<"response" | "error" | "headers">("response");
+  const [edgeTab, setEdgeTab] = useState<"general" | "api">("general");
 
   // Resolve the OpenAPI spec that applies to this action (per-node wins over global)
   const resolvedSpec = useMemo(
@@ -411,6 +452,10 @@ function EdgeEditor({
     setTimeout(() => setCopiedCurl(false), 2000);
   };
 
+  const conditionsCount = action.conditions?.length ?? 0;
+  const effectsCount = action.effects?.length ?? 0;
+  const behaviorBadge = conditionsCount + effectsCount;
+
   return (
     <>
       <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-800 rounded-lg p-3 border border-slate-700/50">
@@ -421,30 +466,38 @@ function EdgeEditor({
         <span className="text-violet-400 font-medium">{targetScreen?.title ?? "?"}</span>
       </div>
 
-      {/* Note */}
-      <MarkdownField
-        label="Nota / Comentario"
-        value={action.note ?? ""}
-        onChange={(v) => updateAction(sourceScreenId, actionId, { note: v || undefined })}
-        placeholder="Soporta **Markdown**: explica la transición..."
-        rows={3}
+      <TabBar
+        active={edgeTab}
+        onChange={setEdgeTab}
+        tabs={[
+          { id: "general", label: "General",       icon: Info,     badge: behaviorBadge || undefined },
+          { id: "api",     label: apiCall ? "API Call" : "+ API",   icon: Globe,    badge: apiCall ? 1 : undefined },
+        ]}
       />
 
-      {/* Conditions (variables required to take this action during playback) */}
-      <ConditionsEditor
-        conditions={action.conditions ?? []}
-        onChange={(c) => updateAction(sourceScreenId, actionId, { conditions: c.length > 0 ? c : undefined })}
-        availableVars={collectVariables(diagram)}
-      />
+      {edgeTab === "general" && (
+        <>
+          <MarkdownField
+            label="Nota / Comentario"
+            value={action.note ?? ""}
+            onChange={(v) => updateAction(sourceScreenId, actionId, { note: v || undefined })}
+            placeholder="Soporta **Markdown**: explica la transición..."
+            rows={3}
+          />
+          <ConditionsEditor
+            conditions={action.conditions ?? []}
+            onChange={(c) => updateAction(sourceScreenId, actionId, { conditions: c.length > 0 ? c : undefined })}
+            availableVars={collectVariables(diagram)}
+          />
+          <EffectsEditor
+            effects={action.effects ?? []}
+            onChange={(e) => updateAction(sourceScreenId, actionId, { effects: e.length > 0 ? e : undefined })}
+            availableVars={collectVariables(diagram)}
+          />
+        </>
+      )}
 
-      {/* Effects (variables modified when this action is taken during playback) */}
-      <EffectsEditor
-        effects={action.effects ?? []}
-        onChange={(e) => updateAction(sourceScreenId, actionId, { effects: e.length > 0 ? e : undefined })}
-        availableVars={collectVariables(diagram)}
-      />
-
-      {!apiCall ? (
+      {edgeTab === "api" && (!apiCall ? (
         <button
           onClick={() => setApiCall({ actionId, method: "GET", endpoint: "/api/v1/" })}
           className="flex items-center justify-center gap-2 w-full py-3 text-sm text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg hover:bg-amber-500/20 transition-colors"
@@ -560,15 +613,151 @@ function EdgeEditor({
             <Trash2 className="w-3.5 h-3.5" /> Quitar API Call
           </button>
         </>
-      )}
-
-      <button
-        onClick={() => { if (confirm("¿Eliminar esta conexión?")) deleteAction(sourceScreenId, actionId); }}
-        className="flex items-center justify-center gap-2 w-full py-2 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg hover:bg-red-500/20 transition-colors"
-      >
-        <Trash2 className="w-3.5 h-3.5" /> Eliminar conexión
-      </button>
+      ))}
     </>
+  );
+}
+
+// ── Multi-Screen Editor (bulk edit) ──────────────────────────────────
+function MultiScreenEditor({ screenIds }: { screenIds: string[] }) {
+  // IMPORTANT: derive the filtered list with useMemo OUTSIDE of the Zustand
+  // selector. Returning a new array from the selector breaks getSnapshot
+  // caching and triggers an infinite-loop warning + crash.
+  const allScreens = useDiagramStore((s) => s.diagram.screens);
+  const updateScreen = useDiagramStore((s) => s.updateScreen);
+  const screenIdSet = useMemo(() => new Set(screenIds), [screenIds]);
+  const screens = useMemo(
+    () => allScreens.filter((sc) => screenIdSet.has(sc.id)),
+    [allScreens, screenIdSet]
+  );
+
+  if (screens.length === 0) {
+    return <p className="text-sm text-slate-500">No hay pantallas seleccionadas.</p>;
+  }
+
+  // Compute "common value" for each field, or undefined if mixed
+  const commonValue = <K extends keyof import("../types/diagram").Screen>(key: K) => {
+    const first = screens[0][key];
+    return screens.every((s) => s[key] === first) ? first : undefined;
+  };
+
+  const commonKind = (commonValue("kind") ?? "screen") as NodeKind;
+  const commonStatus = commonValue("status") as ScreenStatus | undefined;
+  const commonColor = commonValue("color") as ScreenColor | undefined;
+  const commonIcon = commonValue("icon") as ScreenIcon | undefined;
+
+  const applyToAll = <K extends keyof import("../types/diagram").Screen>(key: K, value: import("../types/diagram").Screen[K]) => {
+    for (const s of screens) {
+      updateScreen(s.id, { [key]: value } as Partial<import("../types/diagram").Screen>);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-violet-500/30 bg-violet-500/5 p-3">
+        <div className="text-xs text-violet-300 font-semibold mb-1">Edición múltiple</div>
+        <div className="text-[11px] text-slate-400">
+          Los cambios se aplican a las {screens.length} pantallas seleccionadas. Mantén Shift y haz clic en otra pantalla para añadirla / quitarla.
+        </div>
+        <div className="flex flex-wrap gap-1 mt-2">
+          {screens.map((s) => (
+            <span key={s.id} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+              {s.title}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Tipo de nodo */}
+      <Field label={<>Tipo de nodo {commonValue("kind") === undefined && <span className="text-amber-400 normal-case font-normal">· mezcla</span>}</>}>
+        <div className="grid grid-cols-3 gap-1.5">
+          {(Object.keys(KIND_DEFAULTS) as NodeKind[]).map((k) => {
+            const def = KIND_DEFAULTS[k];
+            const Ic = SCREEN_ICONS[def.icon].icon;
+            const active = commonKind === k && commonValue("kind") !== undefined;
+            return (
+              <button
+                key={k}
+                onClick={() => applyToAll("kind", k)}
+                className={`flex flex-col items-center gap-1 py-2 rounded-md border transition-all text-[10px] ${
+                  active
+                    ? "border-violet-500 bg-violet-500/10 text-violet-300"
+                    : "border-slate-700 bg-slate-800 text-slate-400 hover:border-slate-500 hover:text-slate-200"
+                }`}
+                title={def.label}
+              >
+                <Ic className="w-4 h-4" />
+                <span className="truncate w-full px-1 text-center">{def.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+
+      {/* Estado */}
+      <Field label={<>Estado {commonStatus === undefined && <span className="text-amber-400 normal-case font-normal">· mezcla</span>}</>}>
+        <div className="flex gap-1.5 flex-wrap">
+          {(Object.keys(STATUS_COLORS) as ScreenStatus[]).map((status) => {
+            const style = STATUS_COLORS[status];
+            const active = commonStatus === status;
+            return (
+              <button
+                key={status}
+                onClick={() => applyToAll("status", status)}
+                className={`text-[11px] font-medium px-2.5 py-1 rounded-md border transition-all ${
+                  active ? `${style.badge} border-current` : "text-slate-500 bg-slate-800 border-slate-700 hover:border-slate-500"
+                }`}
+              >
+                {style.text}
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+
+      {/* Color */}
+      <Field label={<>Color {commonColor === undefined && <span className="text-amber-400 normal-case font-normal">· mezcla</span>}</>}>
+        <div className="flex gap-1.5 flex-wrap">
+          {(Object.keys(SCREEN_COLORS) as ScreenColor[]).map((c) => {
+            const active = commonColor === c;
+            return (
+              <button
+                key={c}
+                onClick={() => applyToAll("color", c)}
+                className={`w-7 h-7 rounded-md border-2 transition-all ${SCREEN_COLORS[c].header} ${
+                  active ? "border-white scale-110" : "border-transparent hover:border-slate-500"
+                }`}
+                title={c}
+              />
+            );
+          })}
+        </div>
+      </Field>
+
+      {/* Icono */}
+      <Field label={<>Icono {commonIcon === undefined && <span className="text-amber-400 normal-case font-normal">· mezcla</span>}</>}>
+        <div className="flex gap-1 flex-wrap">
+          {(Object.keys(SCREEN_ICONS) as ScreenIcon[]).map((key) => {
+            const { icon: Ic, label } = SCREEN_ICONS[key];
+            const active = commonIcon === key;
+            return (
+              <button
+                key={key}
+                onClick={() => applyToAll("icon", key)}
+                className={`p-1.5 rounded-md border transition-all ${
+                  active
+                    ? "border-violet-500 bg-violet-500/20 text-violet-300"
+                    : "border-transparent text-slate-500 hover:text-slate-300 hover:bg-slate-800"
+                }`}
+                title={label}
+              >
+                <Ic className="w-3.5 h-3.5" />
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+    </div>
   );
 }
 
@@ -756,12 +945,15 @@ function MarkdownField({
   onChange,
   placeholder,
   rows = 4,
+  minHeight,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   rows?: number;
+  /** Optional minimum height in px for both edit (textarea) and preview modes. */
+  minHeight?: number;
 }) {
   const [editing, setEditing] = useState(!value);
 
@@ -784,13 +976,15 @@ function MarkdownField({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           rows={rows}
-          className="input-field resize-y font-mono text-xs"
+          style={minHeight ? { minHeight } : undefined}
+          className="input-field resize-y font-mono text-xs w-full"
           placeholder={placeholder}
           onBlur={() => { if (value) setEditing(false); }}
         />
       ) : (
         <div
           onClick={() => setEditing(true)}
+          style={minHeight ? { minHeight } : undefined}
           className="bg-slate-800 rounded-md p-3 border border-slate-700 cursor-text hover:border-slate-600 transition-colors min-h-[40px]"
         >
           <Markdown>{value}</Markdown>
@@ -806,6 +1000,51 @@ function Field({ label, children }: { label: React.ReactNode; children: React.Re
     <div>
       <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">{label}</h3>
       {children}
+    </div>
+  );
+}
+
+interface TabSpec<T extends string> {
+  id: T;
+  label: string;
+  icon: typeof Info;
+  badge?: number;
+}
+
+function TabBar<T extends string>({
+  tabs,
+  active,
+  onChange,
+}: {
+  tabs: TabSpec<T>[];
+  active: T;
+  onChange: (id: T) => void;
+}) {
+  return (
+    <div className="flex gap-0.5 border-b border-slate-700 -mx-4 px-4 sticky top-0 bg-slate-900 z-10">
+      {tabs.map((t) => {
+        const Ic = t.icon;
+        const isActive = active === t.id;
+        return (
+          <button
+            key={t.id}
+            onClick={() => onChange(t.id)}
+            className={`flex items-center gap-1.5 px-2.5 py-2 text-[11px] font-medium transition-colors border-b-2 -mb-px ${
+              isActive
+                ? "text-violet-300 border-violet-500"
+                : "text-slate-500 border-transparent hover:text-slate-300"
+            }`}
+          >
+            <Ic className="w-3.5 h-3.5" />
+            <span>{t.label}</span>
+            {typeof t.badge === "number" && t.badge > 0 && (
+              <span className={`text-[9px] px-1 rounded ${isActive ? "bg-violet-500/20 text-violet-300" : "bg-slate-800 text-slate-500"}`}>
+                {t.badge}
+              </span>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }

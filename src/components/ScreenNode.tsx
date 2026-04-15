@@ -53,6 +53,8 @@ export function ScreenNode({ data, selected, id }: NodeProps<ScreenNodeType>) {
   const playback = useDiagramStore((s) => s.playback);
   const startPlayback = useDiagramStore((s) => s.startPlayback);
   const updateScreen = useDiagramStore((s) => s.updateScreen);
+  const setHoveredActionId = useDiagramStore((s) => s.setHoveredActionId);
+  const setSelection = useDiagramStore((s) => s.setSelection);
   const edgeConnectMode = usePreferencesStore((s) => s.edgeConnectMode);
   const statusStyle = STATUS_COLORS[data.status];
   const colorStyle = SCREEN_COLORS[data.color];
@@ -201,10 +203,16 @@ export function ScreenNode({ data, selected, id }: NodeProps<ScreenNodeType>) {
             </>
           ) : (
             <>
-              {/* Description */}
-              <p className={`screen-node-desc px-3 py-2 text-xs text-slate-400 border-b border-slate-700/40 ${shell.innerPad ?? ""}`}>
-                {data.description || <span className="italic text-slate-600">Sin descripción</span>}
-              </p>
+              {/* Description — prominent: more padding, larger leading, soft accent border */}
+              {data.description ? (
+                <p className={`screen-node-desc px-3 py-2.5 text-[12.5px] leading-snug text-slate-200 border-b border-slate-700/40 whitespace-pre-line ${shell.innerPad ?? ""}`}>
+                  {data.description}
+                </p>
+              ) : (
+                <p className={`screen-node-desc px-3 py-1.5 text-[11px] italic text-slate-600 border-b border-slate-700/40 ${shell.innerPad ?? ""}`}>
+                  Sin descripción
+                </p>
+              )}
 
               {/* Tags */}
               {data.tags.length > 0 && (
@@ -222,25 +230,35 @@ export function ScreenNode({ data, selected, id }: NodeProps<ScreenNodeType>) {
                 {data.actions.map((action) => (
                   <div
                     key={action.id}
-                    className={`screen-node-action relative flex items-center gap-2 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800/60 ${shell.innerPad ?? ""}`}
+                    onMouseEnter={() => setHoveredActionId(action.id)}
+                    onMouseLeave={() => setHoveredActionId(null)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelection({
+                        kind: "edge",
+                        actionId: action.id,
+                        sourceScreenId: id,
+                        targetScreenId: "",
+                      });
+                    }}
+                    className={`screen-node-action relative px-3 py-1.5 text-xs text-slate-300 hover:bg-violet-500/10 cursor-pointer ${shell.innerPad ?? ""}`}
                   >
-                    <Zap
-                      className={`w-3 h-3 shrink-0 ${action.hasApi ? "text-amber-400" : "text-slate-500"}`}
-                    />
-                    <span className="truncate">{action.label}</span>
-                    {action.hasConditions && (
-                      <Lock className="w-3 h-3 shrink-0 text-violet-400/80" />
-                    )}
-                    {action.hasEffects && (
-                      <Sparkles className="w-3 h-3 shrink-0 text-fuchsia-400/80" />
-                    )}
-                    {action.hasNote && (
-                      <MessageSquare className="w-3 h-3 shrink-0 text-sky-400/70" />
-                    )}
-                    {action.hasApi && (
-                      <span className="ml-auto text-[10px] font-mono font-medium text-amber-400/80 bg-amber-400/10 px-1.5 py-0.5 rounded">
-                        API
-                      </span>
+                    <div className="flex items-center gap-2">
+                      <Zap className={`w-3 h-3 shrink-0 ${action.hasApi ? "text-amber-400" : "text-slate-500"}`} />
+                      <span className="truncate flex-1">{action.label}</span>
+                      {action.hasConditions && <Lock className="w-3 h-3 shrink-0 text-violet-400/80" />}
+                      {action.hasEffects && <Sparkles className="w-3 h-3 shrink-0 text-fuchsia-400/80" />}
+                      {action.hasApi && (
+                        <span className="text-[10px] font-mono font-medium text-amber-400/80 bg-amber-400/10 px-1.5 py-0.5 rounded">
+                          API
+                        </span>
+                      )}
+                    </div>
+                    {action.note && (
+                      <div className="mt-0.5 ml-5 flex items-start gap-1 text-[11px] text-sky-300/80 italic leading-snug">
+                        <MessageSquare className="w-3 h-3 mt-0.5 shrink-0 text-sky-400/60" />
+                        <span className="line-clamp-2">{action.note}</span>
+                      </div>
                     )}
                     <Handle
                       type="source"

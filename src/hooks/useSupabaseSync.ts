@@ -23,7 +23,7 @@ const OWN_SAVES_TTL_MS = 15_000;
  */
 export function useSupabaseSync(
   diagramId: string,
-  onLoaded: () => void,
+  onLoaded: (result: { ok: true } | { ok: false; error: string }) => void,
   onSaveStatusChange: (status: "saved" | "saving" | "unsaved" | "error") => void,
 ) {
   const lastSavedAt = useRef<string>("");
@@ -66,12 +66,18 @@ export function useSupabaseSync(
         store.setCloudDiagramName(name);
         lastSavedAt.current = updatedAt;
         onSaveStatusChange("saved");
-        onLoaded();
+        onLoaded({ ok: true });
       })
       .catch((err) => {
         console.error("Failed to load diagram:", err);
         onSaveStatusChange("error");
-        onLoaded();
+        // Supabase returns the empty result as a non-error in some setups;
+        // PGRST116 is "no rows" which we treat as access-denied/not-found.
+        const code = (err as { code?: string })?.code;
+        const message = code === "PGRST116"
+          ? "No tienes acceso a este diagrama o no existe."
+          : ((err as Error)?.message ?? "No se pudo cargar el diagrama.");
+        onLoaded({ ok: false, error: message });
       });
 
     return () => { cancelled = true; };

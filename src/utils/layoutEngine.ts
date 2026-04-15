@@ -1,5 +1,6 @@
 import type { Node, Edge } from "@xyflow/react";
 import type { DiagramData, ScreenStatus, ScreenColor, ScreenIcon, NodeKind, CardViewMode } from "../types/diagram";
+import { formatCondition, formatEffect } from "./variables";
 import {
   Monitor, Smartphone, Layout, Home, User, Settings, Shield, Key,
   CreditCard, ShoppingCart, FileText, Mail, Bell, Search, Map as MapIcon, Camera,
@@ -55,6 +56,10 @@ const NODE_HEIGHT_BASE = 120;
 const ACTION_HEIGHT = 36;
 const H_GAP = 120;
 const V_GAP = 60;
+/** Vertical gap between unrelated subgraphs ("connected components"). */
+const COMPONENT_GAP = 140;
+/** Iterations of the barycenter pass for crossing reduction. Each pair = down+up sweep. */
+const BARYCENTER_PASSES = 6;
 
 export interface ScreenNodeData {
   screenId: string;
@@ -70,6 +75,7 @@ export interface ScreenNodeData {
   actions: {
     id: string;
     label: string;
+    note?: string;
     hasApi: boolean;
     hasNote: boolean;
     hasConditions: boolean;
@@ -85,6 +91,10 @@ export interface ApiEdgeData {
   endpoint?: string;
   note?: string;
   isErrorPath?: boolean;
+  hasConditions: boolean;
+  hasEffects: boolean;
+  conditionSummary?: string;
+  effectSummary?: string;
   [key: string]: unknown;
 }
 
@@ -106,6 +116,183 @@ export const STATUS_COLORS: Record<ScreenStatus, { border: string; bg: string; b
   blocked: { border: "border-red-500", bg: "bg-red-500/10", badge: "bg-red-500/20 text-red-400", text: "Bloqueado" },
 };
 
+/**
+ * Compute the layout for a diagram using a Sugiyama-style approach:
+ *   1. Split the diagram into weakly-connected components.
+ *   2. For each component, assign each node to a layer using
+ *      LONGEST-PATH layering (cycle-safe).
+ *   3. Order nodes within each layer with the BARYCENTER heuristic to
+ *      reduce edge crossings (alternating top-down / bottom-up sweeps).
+ *   4. Compute coordinates using actual per-node heights so cards never
+ *      overlap, even when they have very different action counts.
+ *   5. Stack components vertically with a gap.
+ *
+ * Saved positions (from manual drags) always win over the computed
+ * layout, so the user keeps their custom arrangements.
+ */
+function computeAutoLayout(diagram: DiagramData): Map<string, { x: number; y: number }> {
+  const screens = diagram.screens;
+  if (screens.length === 0) return new Map();
+
+  const screenById = new Map(screens.map((s) => [s.id, s]));
+  const nodeHeight = (id: string) => {
+    const s = screenById.get(id);
+    return NODE_HEIGHT_BASE + (s?.actions.length ?? 0) * ACTION_HEIGHT;
+  };
+
+  // Build forward + reverse adjacency lists. We use ONLY the success
+  // path for layering — error paths skew distance-from-root values for
+  // little visual benefit, but they're considered later for crossing
+  // reduction so error edges still try to land on close nodes.
+  const successors = new Map<string, Set<string>>();
+  const predecessors = new Map<string, Set<string>>();
+  for (const s of screens) {
+    successors.set(s.id, new Set());
+    predecessors.set(s.id, new Set());
+  }
+  for (const s of screens) {
+    for (const a of s.actions) {
+      const t = a.targetScreen;
+      if (t && t !== s.id && screenById.has(t)) {
+        successors.get(s.id)!.add(t);
+        predecessors.get(t)!.add(s.id);
+      }
+    }
+  }
+
+  // Step 1 — Weakly-connected components (treat edges as undirected).
+  const components: string[][] = [];
+  const seen = new Set<string>();
+  for (const s of screens) {
+    if (seen.has(s.id)) continue;
+    const stack = [s.id];
+    const nodes: string[] = [];
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      nodes.push(id);
+      successors.get(id)?.forEach((n) => { if (!seen.has(n)) stack.push(n); });
+      predecessors.get(id)?.forEach((n) => { if (!seen.has(n)) stack.push(n); });
+    }
+    components.push(nodes);
+  }
+
+  const placements = new Map<string, { x: number; y: number }>();
+  let yOffset = 40;
+
+  for (const componentNodes of components) {
+    const inComponent = new Set(componentNodes);
+
+    // Step 2 — Longest-path layering. Cycle-safe: a back-edge during
+    // DFS contributes 0 instead of recursing, breaking the loop.
+    const layer = new Map<string, number>();
+    const visiting = new Set<string>();
+
+    const computeLayer = (id: string): number => {
+      const cached = layer.get(id);
+      if (cached !== undefined) return cached;
+      if (visiting.has(id)) return 0; // back-edge in cycle
+      visiting.add(id);
+      let max = -1;
+      for (const pred of predecessors.get(id) ?? []) {
+        if (!inComponent.has(pred)) continue;
+        max = Math.max(max, computeLayer(pred));
+      }
+      visiting.delete(id);
+      const lyr = max + 1;
+      layer.set(id, lyr);
+      return lyr;
+    };
+
+    // Process roots first for stable layer numbers.
+    for (const id of componentNodes) {
+      const preds = predecessors.get(id);
+      if (!preds || [...preds].every((p) => !inComponent.has(p))) {
+        computeLayer(id);
+      }
+    }
+    // Anything left (cycles with no clear root) gets a layer too.
+    for (const id of componentNodes) {
+      if (!layer.has(id)) computeLayer(id);
+    }
+
+    // Group by layer (column).
+    const byLayer: string[][] = [];
+    for (const id of componentNodes) {
+      const lyr = layer.get(id)!;
+      while (byLayer.length <= lyr) byLayer.push([]);
+      byLayer[lyr].push(id);
+    }
+
+    // Initial intra-layer ordering: by id for determinism. Barycenter
+    // will refine this immediately.
+    for (const l of byLayer) l.sort();
+
+    // Step 3 — Barycenter crossing reduction. Alternating sweeps
+    // re-order each layer by the average position of its connected
+    // neighbours in the adjacent layer.
+    const positionInLayer = (l: string[]): Map<string, number> =>
+      new Map(l.map((id, i) => [id, i]));
+
+    const sortByBarycenter = (
+      target: string[],
+      neighbour: string[],
+      neighbourEdges: Map<string, Set<string>>,
+    ) => {
+      const idx = positionInLayer(neighbour);
+      const bary = new Map<string, number>();
+      target.forEach((id, i) => {
+        const ns = [...(neighbourEdges.get(id) ?? [])].filter((n) => idx.has(n));
+        bary.set(id, ns.length === 0 ? i : ns.reduce((s, n) => s + idx.get(n)!, 0) / ns.length);
+      });
+      target.sort((a, b) => bary.get(a)! - bary.get(b)!);
+    };
+
+    for (let pass = 0; pass < BARYCENTER_PASSES; pass++) {
+      if (pass % 2 === 0) {
+        for (let l = 1; l < byLayer.length; l++) {
+          sortByBarycenter(byLayer[l], byLayer[l - 1], predecessors);
+        }
+      } else {
+        for (let l = byLayer.length - 2; l >= 0; l--) {
+          sortByBarycenter(byLayer[l], byLayer[l + 1], successors);
+        }
+      }
+    }
+
+    // Step 4 — Assign coordinates. Each layer stacks vertically using
+    // actual node heights; columns are then centered around the tallest
+    // layer for a balanced look.
+    const layerHeight: number[] = [];
+    const localY = new Map<string, number>();
+    for (let l = 0; l < byLayer.length; l++) {
+      let y = 0;
+      for (const id of byLayer[l]) {
+        localY.set(id, y);
+        y += nodeHeight(id) + V_GAP;
+      }
+      layerHeight[l] = y - V_GAP; // total height of column l
+    }
+    const tallest = Math.max(0, ...layerHeight);
+
+    for (let l = 0; l < byLayer.length; l++) {
+      const offset = (tallest - layerHeight[l]) / 2;
+      for (const id of byLayer[l]) {
+        placements.set(id, {
+          x: 40 + l * (NODE_WIDTH + H_GAP),
+          y: yOffset + (localY.get(id) ?? 0) + offset,
+        });
+      }
+    }
+
+    // Step 5 — Reserve room for this component, then move down.
+    yOffset += tallest + COMPONENT_GAP;
+  }
+
+  return placements;
+}
+
 export function buildFlowElements(
   diagram: DiagramData,
   savedPositions?: Record<string, { x: number; y: number }>
@@ -114,105 +301,63 @@ export function buildFlowElements(
     diagram.apiCalls.map((api) => [api.actionId, api])
   );
 
-  // BFS layered layout
-  const incoming = new Map<string, number>();
-  diagram.screens.forEach((s) => incoming.set(s.id, 0));
-  diagram.screens.forEach((s) =>
-    s.actions.forEach((a) => {
-      incoming.set(a.targetScreen, (incoming.get(a.targetScreen) ?? 0) + 1);
-      if (a.errorTargetScreen) {
-        incoming.set(a.errorTargetScreen, (incoming.get(a.errorTargetScreen) ?? 0) + 1);
-      }
-    })
-  );
-
-  const roots = diagram.screens
-    .filter((s) => (incoming.get(s.id) ?? 0) === 0)
-    .map((s) => s.id);
-  if (roots.length === 0 && diagram.screens.length > 0) {
-    roots.push(diagram.screens[0].id);
-  }
-
-  const layer = new Map<string, number>();
-  const queue = roots.map((id) => {
-    layer.set(id, 0);
-    return id;
-  });
-
-  let head = 0;
-  while (head < queue.length) {
-    const current = queue[head++];
-    const screen = diagram.screens.find((s) => s.id === current);
-    if (!screen) continue;
-    for (const action of screen.actions) {
-      for (const target of [action.targetScreen, action.errorTargetScreen]) {
-        if (target && !layer.has(target)) {
-          layer.set(target, (layer.get(current) ?? 0) + 1);
-          queue.push(target);
-        }
-      }
-    }
-  }
-
-  diagram.screens.forEach((s) => {
-    if (!layer.has(s.id)) layer.set(s.id, 0);
-  });
-
-  const columns = new Map<number, string[]>();
-  layer.forEach((col, id) => {
-    if (!columns.has(col)) columns.set(col, []);
-    columns.get(col)!.push(id);
-  });
-
   const screenById = new Map(diagram.screens.map((s) => [s.id, s]));
+  const auto = computeAutoLayout(diagram);
   const nodes: Node[] = [];
 
-  columns.forEach((ids, col) => {
-    ids.forEach((id, row) => {
-      const screen = screenById.get(id);
-      if (!screen) return;
+  for (const screen of diagram.screens) {
+    const saved = savedPositions?.[screen.id];
+    const computed = auto.get(screen.id) ?? { x: 40, y: 40 };
+    const x = saved?.x ?? computed.x;
+    const y = saved?.y ?? computed.y;
 
-      const saved = savedPositions?.[id];
-      const nodeHeight = NODE_HEIGHT_BASE + screen.actions.length * ACTION_HEIGHT;
-      const x = saved?.x ?? col * (NODE_WIDTH + H_GAP) + 40;
-      const y = saved?.y ?? row * (nodeHeight + V_GAP) + 40;
+    const kind = (screen.kind ?? "screen") as NodeKind;
+    const defaults = KIND_DEFAULTS[kind];
 
-      const kind = (screen.kind ?? "screen") as NodeKind;
-      const defaults = KIND_DEFAULTS[kind];
-
-      nodes.push({
-        id: screen.id,
-        type: "screenNode",
-        position: { x, y },
-        data: {
-          screenId: screen.id,
-          kind,
-          title: screen.title,
-          description: screen.description,
-          status: screen.status ?? "pending",
-          color: screen.color ?? defaults.color,
-          icon: screen.icon ?? defaults.icon,
-          tags: screen.tags ?? [],
-          viewMode: screen.viewMode ?? "actions",
-          imageUrl: screen.imageUrl,
-          actions: screen.actions.map((a) => ({
-            id: a.id,
-            label: a.label,
-            hasApi: apiByAction.has(a.id),
-            hasNote: !!a.note,
-            hasConditions: (a.conditions?.length ?? 0) > 0,
-            hasEffects: (a.effects?.length ?? 0) > 0,
-          })),
-        } satisfies ScreenNodeData,
-      });
+    nodes.push({
+      id: screen.id,
+      type: "screenNode",
+      position: { x, y },
+      data: {
+        screenId: screen.id,
+        kind,
+        title: screen.title,
+        description: screen.description,
+        status: screen.status ?? "pending",
+        color: screen.color ?? defaults.color,
+        icon: screen.icon ?? defaults.icon,
+        tags: screen.tags ?? [],
+        viewMode: screen.viewMode ?? "actions",
+        imageUrl: screen.imageUrl,
+        actions: screen.actions.map((a) => ({
+          id: a.id,
+          label: a.label,
+          note: a.note,
+          hasApi: apiByAction.has(a.id),
+          hasNote: !!a.note,
+          hasConditions: (a.conditions?.length ?? 0) > 0,
+          hasEffects: (a.effects?.length ?? 0) > 0,
+        })),
+      } satisfies ScreenNodeData,
     });
-  });
+  }
 
   const edges: Edge[] = [];
-  diagram.screens.forEach((screen) => {
-    screen.actions.forEach((action) => {
+  for (const screen of diagram.screens) {
+    for (const action of screen.actions) {
       const api = apiByAction.get(action.id);
-      // Main edge (success path)
+      const hasConditions = (action.conditions?.length ?? 0) > 0;
+      const hasEffects = (action.effects?.length ?? 0) > 0;
+      const conditionSummary = hasConditions
+        ? action.conditions!.map(formatCondition).join(" · ")
+        : undefined;
+      const effectSummary = hasEffects
+        ? action.effects!.map(formatEffect).join(" · ")
+        : undefined;
+
+      // Skip dangling edges to non-existent screens (avoids React Flow warnings)
+      if (!screenById.has(action.targetScreen)) continue;
+
       edges.push({
         id: `edge-${action.id}`,
         source: screen.id,
@@ -226,11 +371,14 @@ export function buildFlowElements(
           endpoint: api?.endpoint,
           note: action.note,
           isErrorPath: false,
+          hasConditions,
+          hasEffects,
+          conditionSummary,
+          effectSummary,
         } satisfies ApiEdgeData,
       });
 
-      // Error path edge
-      if (action.errorTargetScreen) {
+      if (action.errorTargetScreen && screenById.has(action.errorTargetScreen)) {
         edges.push({
           id: `edge-err-${action.id}`,
           source: screen.id,
@@ -244,11 +392,15 @@ export function buildFlowElements(
             endpoint: api?.endpoint,
             note: action.note,
             isErrorPath: true,
+            hasConditions,
+            hasEffects,
+            conditionSummary,
+            effectSummary,
           } satisfies ApiEdgeData,
         });
       }
-    });
-  });
+    }
+  }
 
   return { nodes, edges };
 }

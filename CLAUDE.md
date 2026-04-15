@@ -108,13 +108,21 @@ Si añades un nuevo campo al diagrama que debe sincronizar, basta con que viaje 
 
 `buildFlowElements(diagram, savedPositions?)` → `{ nodes, edges }` para React Flow.
 
-- Layout por **BFS layered** (capas por distancia desde roots). Roots = screens sin incoming.
-- Usa `savedPositions[id]` si existe, si no genera grid.
-- Constantes: `NODE_WIDTH=280`, `NODE_HEIGHT_BASE=120`, `ACTION_HEIGHT=36`, `H_GAP=120`, `V_GAP=60`.
-- Construye `ScreenNodeData` (lo que recibe el nodo) inyectando `kind`, `viewMode`, `imageUrl` y con defaults desde `KIND_DEFAULTS[kind]`.
-- Cada acción genera **2 edges** si tiene `errorTargetScreen`: `edge-{actionId}` (success) y `edge-err-{actionId}` (error, rojo discontinuo).
+Algoritmo (Sugiyama-style, en `computeAutoLayout`):
 
-También exporta **`KIND_DEFAULTS`** (icon/color/label por `NodeKind`), **`SCREEN_ICONS`** (mapa de nombres a componentes Lucide), **`SCREEN_COLORS`** y **`STATUS_COLORS`**. Si añades un `ScreenIcon` nuevo, recuerda registrarlo aquí.
+1. **Subgrafos conectados** (weakly-connected components) — se identifican y se apilan verticalmente con `COMPONENT_GAP`. Evita que diagramas desconectados se solapen en (0,0).
+2. **Longest-path layering** (no BFS): cada nodo se asigna a la capa `max(predecessores) + 1`. Cycle-safe: las back-edges aportan 0 en lugar de recursar. Sólo se usa el camino de éxito (`targetScreen`) para la asignación; los `errorTargetScreen` no inflan distancias.
+3. **Barycenter heuristic** para minimizar cruces — `BARYCENTER_PASSES` pasadas alternando top-down y bottom-up reordenan cada capa por el promedio de posiciones de los vecinos en la capa adyacente.
+4. **Coordenadas con altura real**: cada columna se apila con la altura concreta de cada nodo (`NODE_HEIGHT_BASE + actions * ACTION_HEIGHT`). Las columnas se centran verticalmente respecto a la más alta.
+5. `savedPositions[id]` siempre gana sobre el cómputo automático (las cards arrastradas a mano se respetan).
+
+Constantes: `NODE_WIDTH=280`, `NODE_HEIGHT_BASE=120`, `ACTION_HEIGHT=36`, `H_GAP=120`, `V_GAP=60`, `COMPONENT_GAP=140`, `BARYCENTER_PASSES=6`.
+
+Edges: cada acción genera 1 edge (`edge-{actionId}`) y, si tiene `errorTargetScreen`, un segundo edge (`edge-err-{actionId}`, rojo discontinuo). Edges hacia screens inexistentes se descartan (evita warnings de React Flow).
+
+`ScreenNodeData` recibe `kind`/`viewMode`/`imageUrl` con defaults desde `KIND_DEFAULTS[kind]`.
+
+También exporta **`KIND_DEFAULTS`** (icon/color/label por `NodeKind`), **`SCREEN_ICONS`**, **`SCREEN_COLORS`** y **`STATUS_COLORS`**. Si añades un `ScreenIcon` nuevo, recuerda registrarlo aquí.
 
 ## Canvas — `src/components/DiagramCanvas.tsx`
 
@@ -238,7 +246,17 @@ Si añades una nueva key, documentarla aquí.
 
 Tablas: `diagrams` (id, name, data, positions, owner_id, is_public, updated_at) y `diagram_shares` (diagram_id, shared_with, role: viewer|editor). RLS enforced via policies en `supabase/migration*.sql`. RPCs: `find_user_by_email`, `get_diagram_shares`, `list_shared_with_me`.
 
-Realtime publication incluye `diagrams`. Un save dispara `postgres_changes UPDATE` para todos los suscriptores.
+Realtime publication incluye `diagrams`. Un save dispara `postgres_changes UPDATE` para todos los suscriptores (RLS aplicada en versiones recientes de Supabase Realtime).
+
+### Migraciones (orden importante)
+
+1. `supabase/migration.sql` — schema inicial. **Ojo**: incluye 2 políticas abiertas ("Authenticated can view/update any diagram") que estaban pensadas como MVP de colaboración. Cualquier usuario logueado puede leer/editar todo si te quedas aquí.
+2. `supabase/migration_sharing.sql` — añade `is_public`, tabla `diagram_shares`, dropea las políticas abiertas y aplica las restrictivas (owner / public / shared).
+3. `supabase/migration_lockdown.sql` — **migración de seguridad idempotente**. Si los diagramas privados son visibles para cualquier usuario logueado, casi siempre es porque (2) nunca se aplicó. Esta migración es re-runnable: dropea TODAS las policies de `diagrams` + `diagram_shares`, recrea las correctas, garantiza RLS habilitada, y deja queries de verificación comentadas. Es la red de seguridad por defecto cuando se duda del estado del schema.
+
+### Acceso denegado en el cliente
+
+`useSupabaseSync.loadDiagram(...)` propaga errores vía `onLoaded({ ok: false, error })`. `EditorView` (en `App.tsx`) renderiza una pantalla "🔒 Acceso denegado" con botón "Volver a mis diagramas" cuando el load falla — evita que un fallo de RLS se confunda con el diagrama anterior persistido en localStorage. El código de error PGRST116 ("no rows") se traduce a "no tienes acceso o no existe".
 
 ## Patrones al añadir funcionalidad
 

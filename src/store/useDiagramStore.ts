@@ -61,6 +61,9 @@ interface DiagramStore {
   searchTerm: string;
   validationErrors: ValidationError[];
   filterTag: string | null;
+  /** ID of an action currently hovered/focused in any ScreenNode. Drives edge highlight. */
+  hoveredActionId: string | null;
+  setHoveredActionId: (id: string | null) => void;
 
   // Undo / redo
   past: DiagramData[];
@@ -181,6 +184,8 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
   searchTerm: "",
   validationErrors: validateDiagram(initialDiagram),
   filterTag: null,
+  hoveredActionId: null,
+  setHoveredActionId: (id) => set({ hoveredActionId: id }),
   past: [],
   future: [],
   nodePositions: initialPositions,
