@@ -108,15 +108,18 @@ Si añades un nuevo campo al diagrama que debe sincronizar, basta con que viaje 
 
 `buildFlowElements(diagram, savedPositions?)` → `{ nodes, edges }` para React Flow.
 
-Algoritmo (Sugiyama-style, en `computeAutoLayout`):
+Algoritmo Sugiyama completo (en `computeAutoLayout`):
 
-1. **Subgrafos conectados** (weakly-connected components) — se identifican y se apilan verticalmente con `COMPONENT_GAP`. Evita que diagramas desconectados se solapen en (0,0).
-2. **Longest-path layering** (no BFS): cada nodo se asigna a la capa `max(predecessores) + 1`. Cycle-safe: las back-edges aportan 0 en lugar de recursar. Sólo se usa el camino de éxito (`targetScreen`) para la asignación; los `errorTargetScreen` no inflan distancias.
-3. **Barycenter heuristic** para minimizar cruces — `BARYCENTER_PASSES` pasadas alternando top-down y bottom-up reordenan cada capa por el promedio de posiciones de los vecinos en la capa adyacente.
-4. **Coordenadas con altura real**: cada columna se apila con la altura concreta de cada nodo (`NODE_HEIGHT_BASE + actions * ACTION_HEIGHT`). Las columnas se centran verticalmente respecto a la más alta.
-5. `savedPositions[id]` siempre gana sobre el cómputo automático (las cards arrastradas a mano se respetan).
+1. **Subgrafos conectados** (weakly-connected components) — se identifican y se apilan verticalmente con `COMPONENT_GAP`.
+2. **Longest-path layering** (cycle-safe): cada nodo se asigna a la capa `max(predecessores) + 1`. Back-edges aportan 0 en lugar de recursar. Sólo se usa el camino de éxito (`targetScreen`) para el layering; `errorTargetScreen` no infla distancias.
+3. **Dummy nodes**: cada edge `u→v` con `layer(v) - layer(u) > 1` se reemplaza por una cadena `u → d₁ → d₂ → … → v` con dummies invisibles en capas intermedias. Esto permite que la reducción de cruces trabaje siempre con edges adyacentes (paso crucial en Sugiyama). Los dummies jamás se renderizan — prefijo `__dlay_` para detectarlos.
+4. **Orden inicial por DFS desde roots** (determinista, ya cerca del óptimo).
+5. **Reducción de cruces con MEDIAN heuristic** (mejor que barycenter para la mayoría de formas, evita oscilación): `CROSSING_SWEEPS=24` pasadas alternando top-down / bottom-up, cada una reordena cada capa por la mediana de posiciones de sus vecinos en la capa adyacente.
+6. **Stacking Y con altura real**: cada capa se apila con la altura concreta (`NODE_HEIGHT_BASE + actions * ACTION_HEIGHT`). Dummies ocupan 0 altura. Las capas se centran verticalmente respecto a la más alta.
+7. **Y-alignment passes** (`Y_ALIGN_PASSES=3`): cada nodo se desplaza hacia la MEDIANA Y de sus predecesores ORIGINALES (ignorando dummies), luego se re-apila la capa respetando `V_GAP`. Resultado: cadenas padre→hijo→nieto quedan visualmente alineadas cuando es posible, y los edges cruzados se empujan a los extremos.
+8. `savedPositions[id]` siempre gana sobre el cómputo automático (las cards arrastradas a mano se respetan).
 
-Constantes: `NODE_WIDTH=280`, `NODE_HEIGHT_BASE=120`, `ACTION_HEIGHT=36`, `H_GAP=120`, `V_GAP=60`, `COMPONENT_GAP=140`, `BARYCENTER_PASSES=6`.
+Constantes: `NODE_WIDTH=280`, `NODE_HEIGHT_BASE=120`, `ACTION_HEIGHT=36`, `H_GAP=180`, `V_GAP=70`, `COMPONENT_GAP=160`, `CROSSING_SWEEPS=24`, `Y_ALIGN_PASSES=3`, `DUMMY_PREFIX="__dlay_"`. `H_GAP` se subió a 180 para dejar margen a los labels de los edges (pills de método+endpoint).
 
 Edges: cada acción genera 1 edge (`edge-{actionId}`) y, si tiene `errorTargetScreen`, un segundo edge (`edge-err-{actionId}`, rojo discontinuo). Edges hacia screens inexistentes se descartan (evita warnings de React Flow).
 

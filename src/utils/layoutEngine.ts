@@ -54,12 +54,17 @@ export const KIND_DEFAULTS: Record<NodeKind, { icon: ScreenIcon; color: ScreenCo
 const NODE_WIDTH = 280;
 const NODE_HEIGHT_BASE = 120;
 const ACTION_HEIGHT = 36;
-const H_GAP = 120;
-const V_GAP = 60;
+/** Horizontal gap between columns. Needs to accommodate edge-label pills. */
+const H_GAP = 180;
+const V_GAP = 70;
 /** Vertical gap between unrelated subgraphs ("connected components"). */
-const COMPONENT_GAP = 140;
-/** Iterations of the barycenter pass for crossing reduction. Each pair = down+up sweep. */
-const BARYCENTER_PASSES = 6;
+const COMPONENT_GAP = 160;
+/** Max sweeps of the median heuristic (each alternating top-down / bottom-up). */
+const CROSSING_SWEEPS = 24;
+/** Iterations of the Y-alignment pass that tries to straighten parent-child paths. */
+const Y_ALIGN_PASSES = 3;
+/** Dummy-node ID prefix. Dummies exist only to influence within-layer ordering — not rendered. */
+const DUMMY_PREFIX = "__dlay_";
 
 export interface ScreenNodeData {
   screenId: string;
@@ -117,18 +122,28 @@ export const STATUS_COLORS: Record<ScreenStatus, { border: string; bg: string; b
 };
 
 /**
- * Compute the layout for a diagram using a Sugiyama-style approach:
- *   1. Split the diagram into weakly-connected components.
- *   2. For each component, assign each node to a layer using
- *      LONGEST-PATH layering (cycle-safe).
- *   3. Order nodes within each layer with the BARYCENTER heuristic to
- *      reduce edge crossings (alternating top-down / bottom-up sweeps).
- *   4. Compute coordinates using actual per-node heights so cards never
- *      overlap, even when they have very different action counts.
- *   5. Stack components vertically with a gap.
+ * Compute the layout for a diagram using a proper Sugiyama pipeline:
  *
- * Saved positions (from manual drags) always win over the computed
- * layout, so the user keeps their custom arrangements.
+ *   1. Split the diagram into weakly-connected components.
+ *   2. Longest-path layering (cycle-safe, uses success-path edges only).
+ *   3. Insert DUMMY nodes on edges that span more than one layer so the
+ *      crossing-reduction phase can reason about them as adjacent-layer
+ *      edges. Dummies are invisible — they never render, they only
+ *      influence ordering.
+ *   4. Deterministic initial order per layer via DFS from roots.
+ *   5. Crossing reduction with the MEDIAN heuristic (alternating
+ *      top-down / bottom-up sweeps). Median consistently beats barycenter
+ *      for most shapes and avoids the "chasing" oscillation.
+ *   6. Y-coordinate stacking using actual per-node heights; each layer
+ *      is centred around the tallest column so columns don't drift.
+ *   7. Y-alignment passes: each node moves toward the median Y of its
+ *      (real) predecessors, then the layer is re-stacked respecting V_GAP.
+ *      The result is that chains parent→child→grand-child end up
+ *      vertically aligned when possible, with crossing edges pushed to
+ *      the extremes.
+ *   8. Components stack vertically with COMPONENT_GAP.
+ *
+ * Saved positions (from manual drags) always win over the computed layout.
  */
 function computeAutoLayout(diagram: DiagramData): Map<string, { x: number; y: number }> {
   const screens = diagram.screens;
@@ -139,28 +154,23 @@ function computeAutoLayout(diagram: DiagramData): Map<string, { x: number; y: nu
     const s = screenById.get(id);
     return NODE_HEIGHT_BASE + (s?.actions.length ?? 0) * ACTION_HEIGHT;
   };
+  const isDummy = (id: string) => id.startsWith(DUMMY_PREFIX);
 
-  // Build forward + reverse adjacency lists. We use ONLY the success
-  // path for layering — error paths skew distance-from-root values for
-  // little visual benefit, but they're considered later for crossing
-  // reduction so error edges still try to land on close nodes.
-  const successors = new Map<string, Set<string>>();
-  const predecessors = new Map<string, Set<string>>();
-  for (const s of screens) {
-    successors.set(s.id, new Set());
-    predecessors.set(s.id, new Set());
-  }
+  // ── Success-path adjacency (drives layering + alignment). ────────
+  const succ = new Map<string, string[]>();
+  const pred = new Map<string, string[]>();
+  for (const s of screens) { succ.set(s.id, []); pred.set(s.id, []); }
   for (const s of screens) {
     for (const a of s.actions) {
       const t = a.targetScreen;
       if (t && t !== s.id && screenById.has(t)) {
-        successors.get(s.id)!.add(t);
-        predecessors.get(t)!.add(s.id);
+        succ.get(s.id)!.push(t);
+        pred.get(t)!.push(s.id);
       }
     }
   }
 
-  // Step 1 — Weakly-connected components (treat edges as undirected).
+  // ── 1. Weakly-connected components (undirected). ─────────────────
   const components: string[][] = [];
   const seen = new Set<string>();
   for (const s of screens) {
@@ -172,8 +182,8 @@ function computeAutoLayout(diagram: DiagramData): Map<string, { x: number; y: nu
       if (seen.has(id)) continue;
       seen.add(id);
       nodes.push(id);
-      successors.get(id)?.forEach((n) => { if (!seen.has(n)) stack.push(n); });
-      predecessors.get(id)?.forEach((n) => { if (!seen.has(n)) stack.push(n); });
+      for (const n of succ.get(id) ?? []) if (!seen.has(n)) stack.push(n);
+      for (const n of pred.get(id) ?? []) if (!seen.has(n)) stack.push(n);
     }
     components.push(nodes);
   }
@@ -181,113 +191,191 @@ function computeAutoLayout(diagram: DiagramData): Map<string, { x: number; y: nu
   const placements = new Map<string, { x: number; y: number }>();
   let yOffset = 40;
 
-  for (const componentNodes of components) {
-    const inComponent = new Set(componentNodes);
+  for (const compNodes of components) {
+    const inComp = new Set(compNodes);
 
-    // Step 2 — Longest-path layering. Cycle-safe: a back-edge during
-    // DFS contributes 0 instead of recursing, breaking the loop.
+    // ── 2. Longest-path layering (cycle-safe DFS). ─────────────────
     const layer = new Map<string, number>();
     const visiting = new Set<string>();
-
     const computeLayer = (id: string): number => {
       const cached = layer.get(id);
       if (cached !== undefined) return cached;
-      if (visiting.has(id)) return 0; // back-edge in cycle
+      if (visiting.has(id)) return 0; // back-edge
       visiting.add(id);
       let max = -1;
-      for (const pred of predecessors.get(id) ?? []) {
-        if (!inComponent.has(pred)) continue;
-        max = Math.max(max, computeLayer(pred));
+      for (const p of pred.get(id) ?? []) {
+        if (!inComp.has(p)) continue;
+        max = Math.max(max, computeLayer(p));
       }
       visiting.delete(id);
-      const lyr = max + 1;
-      layer.set(id, lyr);
-      return lyr;
+      const l = max + 1;
+      layer.set(id, l);
+      return l;
     };
-
-    // Process roots first for stable layer numbers.
-    for (const id of componentNodes) {
-      const preds = predecessors.get(id);
-      if (!preds || [...preds].every((p) => !inComponent.has(p))) {
-        computeLayer(id);
-      }
+    for (const id of compNodes) {
+      const preds = pred.get(id);
+      if (!preds || preds.filter((p) => inComp.has(p)).length === 0) computeLayer(id);
     }
-    // Anything left (cycles with no clear root) gets a layer too.
-    for (const id of componentNodes) {
-      if (!layer.has(id)) computeLayer(id);
-    }
+    for (const id of compNodes) if (!layer.has(id)) computeLayer(id);
 
-    // Group by layer (column).
     const byLayer: string[][] = [];
-    for (const id of componentNodes) {
-      const lyr = layer.get(id)!;
-      while (byLayer.length <= lyr) byLayer.push([]);
-      byLayer[lyr].push(id);
+    for (const id of compNodes) {
+      const l = layer.get(id)!;
+      while (byLayer.length <= l) byLayer.push([]);
+      byLayer[l].push(id);
     }
 
-    // Initial intra-layer ordering: by id for determinism. Barycenter
-    // will refine this immediately.
-    for (const l of byLayer) l.sort();
-
-    // Step 3 — Barycenter crossing reduction. Alternating sweeps
-    // re-order each layer by the average position of its connected
-    // neighbours in the adjacent layer.
-    const positionInLayer = (l: string[]): Map<string, number> =>
-      new Map(l.map((id, i) => [id, i]));
-
-    const sortByBarycenter = (
-      target: string[],
-      neighbour: string[],
-      neighbourEdges: Map<string, Set<string>>,
-    ) => {
-      const idx = positionInLayer(neighbour);
-      const bary = new Map<string, number>();
-      target.forEach((id, i) => {
-        const ns = [...(neighbourEdges.get(id) ?? [])].filter((n) => idx.has(n));
-        bary.set(id, ns.length === 0 ? i : ns.reduce((s, n) => s + idx.get(n)!, 0) / ns.length);
-      });
-      target.sort((a, b) => bary.get(a)! - bary.get(b)!);
-    };
-
-    for (let pass = 0; pass < BARYCENTER_PASSES; pass++) {
-      if (pass % 2 === 0) {
-        for (let l = 1; l < byLayer.length; l++) {
-          sortByBarycenter(byLayer[l], byLayer[l - 1], predecessors);
-        }
-      } else {
-        for (let l = byLayer.length - 2; l >= 0; l--) {
-          sortByBarycenter(byLayer[l], byLayer[l + 1], successors);
+    // ── 3. Dummy nodes for cross-layer edges. ──────────────────────
+    // Every pair (u→v) with layer(v) - layer(u) > 1 gets dummies on
+    // intermediate layers, linked as a chain u→d_1→d_2→…→v. This
+    // dramatically helps the crossing-reduction phase because every
+    // "effective" edge now spans exactly one layer.
+    const adj = new Map<string, string[]>();     // includes dummies
+    const adjRev = new Map<string, string[]>();
+    for (const n of compNodes) { adj.set(n, []); adjRev.set(n, []); }
+    let dummyCount = 0;
+    for (const u of compNodes) {
+      for (const v of succ.get(u) ?? []) {
+        if (!inComp.has(v)) continue;
+        const lu = layer.get(u)!;
+        const lv = layer.get(v)!;
+        if (lu >= lv) continue; // back-edge on cycle → skip
+        if (lv - lu === 1) {
+          adj.get(u)!.push(v);
+          adjRev.get(v)!.push(u);
+        } else {
+          let prev = u;
+          for (let l = lu + 1; l < lv; l++) {
+            const did = `${DUMMY_PREFIX}${dummyCount++}`;
+            adj.set(did, []);
+            adjRev.set(did, []);
+            byLayer[l].push(did);
+            adj.get(prev)!.push(did);
+            adjRev.get(did)!.push(prev);
+            prev = did;
+          }
+          adj.get(prev)!.push(v);
+          adjRev.get(v)!.push(prev);
         }
       }
     }
 
-    // Step 4 — Assign coordinates. Each layer stacks vertically using
-    // actual node heights; columns are then centered around the tallest
-    // layer for a balanced look.
-    const layerHeight: number[] = [];
-    const localY = new Map<string, number>();
+    // ── 4. Initial ordering: DFS from roots (deterministic). ───────
+    // Nodes reached earlier in DFS go first within their layer. This
+    // already gets us close to a good ordering before the median sweeps.
+    const dfsRank = new Map<string, number>();
+    let rank = 0;
+    const dfs = (id: string) => {
+      if (dfsRank.has(id)) return;
+      dfsRank.set(id, rank++);
+      for (const n of adj.get(id) ?? []) dfs(n);
+    };
+    for (const id of compNodes) {
+      const preds = (pred.get(id) ?? []).filter((p) => inComp.has(p));
+      if (preds.length === 0) dfs(id);
+    }
+    // Any node not visited (isolated cycle roots) still gets a rank
+    for (const l of byLayer) for (const id of l) if (!dfsRank.has(id)) dfs(id);
+    for (const l of byLayer) {
+      l.sort((a, b) => (dfsRank.get(a) ?? 0) - (dfsRank.get(b) ?? 0));
+    }
+
+    // ── 5. Crossing reduction (median heuristic). ─────────────────
+    const medianSort = (target: string[], neighbour: string[], edges: Map<string, string[]>) => {
+      const pos = new Map(neighbour.map((id, i) => [id, i]));
+      const med = new Map<string, number>();
+      for (const id of target) {
+        const ns = (edges.get(id) ?? [])
+          .map((n) => pos.get(n))
+          .filter((v): v is number => v !== undefined)
+          .sort((a, b) => a - b);
+        if (ns.length === 0) { med.set(id, -1); continue; }
+        const m = (ns.length - 1) / 2;
+        med.set(id, Number.isInteger(m) ? ns[m] : (ns[Math.floor(m)] + ns[Math.ceil(m)]) / 2);
+      }
+      target.sort((a, b) => {
+        const ma = med.get(a)!;
+        const mb = med.get(b)!;
+        if (ma < 0 && mb < 0) return 0;
+        if (ma < 0) return -1; // "no preference" anchors to top
+        if (mb < 0) return 1;
+        return ma - mb;
+      });
+    };
+    for (let pass = 0; pass < CROSSING_SWEEPS; pass++) {
+      if (pass % 2 === 0) {
+        for (let l = 1; l < byLayer.length; l++) medianSort(byLayer[l], byLayer[l - 1], adjRev);
+      } else {
+        for (let l = byLayer.length - 2; l >= 0; l--) medianSort(byLayer[l], byLayer[l + 1], adj);
+      }
+    }
+
+    // ── 6. Initial Y-stacking (real nodes only — dummies take no space). ──
+    const yByNode = new Map<string, number>();
+    const layerH: number[] = [];
     for (let l = 0; l < byLayer.length; l++) {
       let y = 0;
       for (const id of byLayer[l]) {
-        localY.set(id, y);
+        if (isDummy(id)) continue;
+        yByNode.set(id, y);
         y += nodeHeight(id) + V_GAP;
       }
-      layerHeight[l] = y - V_GAP; // total height of column l
+      layerH[l] = Math.max(0, y - V_GAP);
     }
-    const tallest = Math.max(0, ...layerHeight);
-
+    const tallest = Math.max(0, ...layerH);
     for (let l = 0; l < byLayer.length; l++) {
-      const offset = (tallest - layerHeight[l]) / 2;
+      const offset = (tallest - layerH[l]) / 2;
       for (const id of byLayer[l]) {
-        placements.set(id, {
-          x: 40 + l * (NODE_WIDTH + H_GAP),
-          y: yOffset + (localY.get(id) ?? 0) + offset,
-        });
+        if (isDummy(id)) continue;
+        yByNode.set(id, (yByNode.get(id) ?? 0) + offset);
       }
     }
 
-    // Step 5 — Reserve room for this component, then move down.
-    yOffset += tallest + COMPONENT_GAP;
+    // ── 7. Y-alignment: each node moves toward the median of its ──
+    //       direct predecessors (using ORIGINAL success edges, not
+    //       the dummy chain). Overlaps are resolved by re-stacking
+    //       sequentially per layer. A few iterations converge quickly.
+    const centerOf = (id: string) => (yByNode.get(id) ?? 0) + nodeHeight(id) / 2;
+    for (let iter = 0; iter < Y_ALIGN_PASSES; iter++) {
+      for (let l = 1; l < byLayer.length; l++) {
+        const realInLayer = byLayer[l].filter((id) => !isDummy(id));
+        const wantY = new Map<string, number>();
+        for (const id of realInLayer) {
+          const preds = (pred.get(id) ?? []).filter((p) => inComp.has(p));
+          if (preds.length === 0) { wantY.set(id, yByNode.get(id) ?? 0); continue; }
+          const centres = preds.map((p) => centerOf(p)).sort((a, b) => a - b);
+          const mid = centres[Math.floor((centres.length - 1) / 2)];
+          wantY.set(id, mid - nodeHeight(id) / 2);
+        }
+        // Order by preferred Y, then sweep and enforce spacing.
+        realInLayer.sort((a, b) => (wantY.get(a) ?? 0) - (wantY.get(b) ?? 0));
+        let cursor = -Infinity;
+        for (const id of realInLayer) {
+          const want = wantY.get(id) ?? 0;
+          const y = Math.max(cursor, want);
+          yByNode.set(id, y);
+          cursor = y + nodeHeight(id) + V_GAP;
+        }
+      }
+    }
+
+    // Normalise component to y >= 0
+    let minY = Infinity;
+    for (const id of compNodes) minY = Math.min(minY, yByNode.get(id) ?? 0);
+    if (!isFinite(minY)) minY = 0;
+
+    let compMaxY = 0;
+    for (const id of compNodes) {
+      const rawY = (yByNode.get(id) ?? 0) - minY;
+      placements.set(id, {
+        x: 40 + layer.get(id)! * (NODE_WIDTH + H_GAP),
+        y: yOffset + rawY,
+      });
+      compMaxY = Math.max(compMaxY, rawY + nodeHeight(id));
+    }
+
+    // ── 8. Stack next component below. ─────────────────────────────
+    yOffset += compMaxY + COMPONENT_GAP;
   }
 
   return placements;
