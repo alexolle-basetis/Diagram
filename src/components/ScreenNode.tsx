@@ -4,7 +4,6 @@ import type { ScreenNodeData } from "../utils/layoutEngine";
 import { STATUS_COLORS, SCREEN_COLORS, SCREEN_ICONS } from "../utils/layoutEngine";
 import { useDiagramStore } from "../store/useDiagramStore";
 import { usePreferencesStore } from "../store/usePreferencesStore";
-import { PlaybackOverlay } from "./PlaybackOverlay";
 import type { NodeKind } from "../types/diagram";
 
 type ScreenNodeType = Node<ScreenNodeData, "screenNode">;
@@ -90,7 +89,7 @@ export function ScreenNode({ data, selected, id }: NodeProps<ScreenNodeType>) {
         screen-node w-[280px] border shadow-lg transition-all relative
         ${shell.outer}
         ${selected ? "border-violet-500 shadow-violet-500/25 ring-1 ring-violet-500/30" : colorStyle.border}
-        ${isPlaybackActive ? "ring-2 ring-violet-400 animate-pulse shadow-violet-500/40" : ""}
+        ${isPlaybackActive ? "ring-2 ring-violet-400 shadow-violet-500/40" : ""}
         ${dimmed ? "opacity-25" : "opacity-100"}
         bg-slate-900
       `}
@@ -297,8 +296,6 @@ export function ScreenNode({ data, selected, id }: NodeProps<ScreenNodeType>) {
         </button>
       )}
 
-      {/* Playback action overlay (below card when this node is active) */}
-      {isPlaybackActive && <PlaybackOverlay nodeId={id} />}
     </div>
   );
 }

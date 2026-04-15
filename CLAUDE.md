@@ -183,9 +183,10 @@ UI:
 - `setPlaybackVariable(name, value)` → override manual; también muta el último snapshot del trail (para que stepback sea coherente).
 - `resetPlaybackVariables()` → vuelve a los defaults manteniendo el nodo actual.
 - `stopPlayback()` → reset completo.
-- Animación de cámara: `setCenter(x, y, { duration, zoom })` via `useReactFlow()`.
-- `PlaybackOverlay` se monta DENTRO del ScreenNode activo (posición absoluta `top-full mt-3`) para evitar proyecciones de coordenadas.
-- `VariablesPanel` se monta en `DiagramCanvas` (bottom-left) durante el playback con override manual.
+- **Animación ligera**: sólo se anima cuando el usuario elige una acción; pan de 250ms **sin** cambiar el zoom (se usa el zoom actual del viewport). El `useEffect` que re-centraba automáticamente en cada cambio de `playback.nodeId` se eliminó a propósito — el zoom automático de cada paso era chocante.
+- **`PlaybackOverlay` se monta a nivel `DiagramCanvas`** con `position: fixed` (screen-space, ignora el zoom). Smart-placement: elige **derecha > izquierda > abajo > arriba** según el espacio disponible alrededor del nodo activo. Se subscribe a `useViewport()` de React Flow para seguir al nodo en tiempo real al hacer pan/zoom, y al `resize` de la ventana para re-clamp.
+- El ring violeta del nodo activo es estático (se quitó `animate-pulse` porque distraía).
+- `VariablesPanel` se monta también en `DiagramCanvas` (bottom-left) durante el playback con override manual.
 
 ## Variables / Conditions / Effects (`src/utils/variables.ts`)
 

@@ -1,15 +1,23 @@
-import { useReactFlow } from "@xyflow/react";
+import { useMemo, useEffect, useState } from "react";
+import { useReactFlow, useViewport } from "@xyflow/react";
 import { useDiagramStore } from "../store/useDiagramStore";
 import { ArrowRight, Globe, MessageSquare, AlertCircle, LogOut, Lock, Sparkles } from "lucide-react";
 import { unmetConditions, formatCondition, formatEffect } from "../utils/variables";
 
+const OVERLAY_WIDTH = 340;
+/** Approx max overlay height — used to decide placement. Real clamp below. */
+const OVERLAY_MAX_HEIGHT = 360;
+const MARGIN = 12;
+
 /**
- * Panel de acciones que aparece bajo el nodo activo durante el modo playback.
- * - Renderiza los `actions` como botones grandes.
- * - Acciones cuyas condiciones no se cumplen aparecen atenuadas y deshabilitadas
- *   con un tooltip listando las condiciones no satisfechas.
- * - Al elegir una acción, se aplican sus efectos (en el store) y se anima la
- *   cámara hacia el destino.
+ * Floating action picker that appears ANCHORED to the active playback node.
+ *
+ * Positioned in **screen-space** (fixed) so it ignores React Flow's zoom
+ * (always readable). It auto-picks the side with most room:
+ *   right → left → bottom → top, clamped to the viewport.
+ *
+ * Reactive to pan/zoom via `useViewport`: when the user moves the canvas
+ * the overlay follows the node in real time.
  */
 export function PlaybackOverlay({ nodeId }: { nodeId: string }) {
   const screen = useDiagramStore((s) => s.getScreen(nodeId));
@@ -18,29 +26,118 @@ export function PlaybackOverlay({ nodeId }: { nodeId: string }) {
   const variables = useDiagramStore((s) => s.playback.variables);
   const advancePlayback = useDiagramStore((s) => s.advancePlayback);
   const stopPlayback = useDiagramStore((s) => s.stopPlayback);
-  const { setCenter, getNode } = useReactFlow();
+  const { setCenter, getNode, getViewport } = useReactFlow();
+  // Subscribe to viewport transform so the overlay re-renders when the user
+  // pans or zooms. Keeps the overlay anchored to the active node.
+  const viewport = useViewport();
 
-  if (!screen) return null;
+  // Re-render on window resize for placement clamping.
+  const [vp, setVp] = useState({ w: window.innerWidth, h: window.innerHeight });
+  useEffect(() => {
+    const onResize = () => setVp({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // Compute the node's bounding box in screen coordinates from the current
+  // viewport transform + node flow-coords. Doing it here keeps us reactive.
+  const placement = useMemo(() => {
+    const node = getNode(nodeId);
+    if (!node) return null;
+    const { x: vx, y: vy, zoom } = viewport;
+    const nodeW = (node.width ?? 280) * zoom;
+    const nodeH = (node.measured?.height ?? node.height ?? 160) * zoom;
+    const nodeLeft = node.position.x * zoom + vx;
+    const nodeTop = node.position.y * zoom + vy;
+    const nodeRight = nodeLeft + nodeW;
+    const nodeBottom = nodeTop + nodeH;
+    const nodeCenterY = nodeTop + nodeH / 2;
+    const nodeCenterX = nodeLeft + nodeW / 2;
+
+    // Space available on each side.
+    const spaceRight = vp.w - nodeRight - MARGIN;
+    const spaceLeft = nodeLeft - MARGIN;
+    const spaceBelow = vp.h - nodeBottom - MARGIN;
+    const spaceAbove = nodeTop - MARGIN;
+
+    // Preference order: right → left → below → above
+    let side: "right" | "left" | "below" | "above" = "below";
+    if (spaceRight >= OVERLAY_WIDTH) side = "right";
+    else if (spaceLeft >= OVERLAY_WIDTH) side = "left";
+    else if (spaceBelow >= 180) side = "below";
+    else if (spaceAbove >= 180) side = "above";
+    else {
+      // Fallback: pick whichever side has more room
+      const m = Math.max(spaceRight, spaceLeft, spaceBelow, spaceAbove);
+      side = m === spaceRight ? "right" : m === spaceLeft ? "left" : m === spaceBelow ? "below" : "above";
+    }
+
+    // Cap the overlay height to the available vertical room (with a floor).
+    const maxH = Math.max(
+      200,
+      Math.min(
+        OVERLAY_MAX_HEIGHT,
+        side === "below" ? spaceBelow - MARGIN :
+        side === "above" ? spaceAbove - MARGIN :
+        vp.h - 2 * MARGIN
+      )
+    );
+
+    let left = 0;
+    let top = 0;
+    if (side === "right") {
+      left = nodeRight + MARGIN;
+      top = nodeCenterY - maxH / 2;
+    } else if (side === "left") {
+      left = nodeLeft - MARGIN - OVERLAY_WIDTH;
+      top = nodeCenterY - maxH / 2;
+    } else if (side === "below") {
+      left = nodeCenterX - OVERLAY_WIDTH / 2;
+      top = nodeBottom + MARGIN;
+    } else {
+      left = nodeCenterX - OVERLAY_WIDTH / 2;
+      top = nodeTop - MARGIN - maxH;
+    }
+
+    // Clamp to viewport.
+    left = Math.max(MARGIN, Math.min(vp.w - OVERLAY_WIDTH - MARGIN, left));
+    top = Math.max(MARGIN, Math.min(vp.h - maxH - MARGIN, top));
+
+    return { left, top, maxH, side };
+  }, [getNode, nodeId, viewport, vp]);
+
+  if (!screen || !placement) return null;
 
   const handleChoose = (targetScreenId: string, actionId: string) => {
     const targetNode = getNode(targetScreenId);
     if (targetNode) {
       const x = targetNode.position.x + (targetNode.width ?? 280) / 2;
-      const y = targetNode.position.y + (targetNode.height ?? 160) / 2;
-      setCenter(x, y, { duration: 600, zoom: 1.1 });
+      const y = targetNode.position.y + (targetNode.measured?.height ?? targetNode.height ?? 160) / 2;
+      // Pan only — keep current zoom — short duration so it feels snappy.
+      const { zoom } = getViewport();
+      setCenter(x, y, { duration: 250, zoom });
     }
-    setTimeout(() => advancePlayback(targetScreenId, actionId), 100);
+    // Small defer so the pan starts before the overlay re-renders on the next node.
+    setTimeout(() => advancePlayback(targetScreenId, actionId), 30);
   };
 
   return (
-    <div className="nodrag absolute left-1/2 -translate-x-1/2 top-full mt-3 z-20 w-[340px] bg-slate-900/95 backdrop-blur border border-violet-500/40 rounded-xl shadow-2xl shadow-violet-500/20 p-3">
-      <div className="flex items-center justify-between mb-2 px-1">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-300">
+    <div
+      className="nodrag fixed z-40 bg-slate-900/95 backdrop-blur border border-violet-500/40 rounded-xl shadow-2xl shadow-violet-500/10 flex flex-col overflow-hidden"
+      style={{
+        left: placement.left,
+        top: placement.top,
+        width: OVERLAY_WIDTH,
+        maxHeight: placement.maxH,
+      }}
+    >
+      <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700/60 bg-slate-800/40 shrink-0">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-300 truncate">
           ¿Qué hacer en {screen.title}?
         </span>
         <button
           onClick={stopPlayback}
-          className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-100 transition-colors"
+          className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-100 transition-colors shrink-0"
           title="Salir del playback (Esc)"
         >
           <LogOut className="w-3 h-3" /> Salir
@@ -48,11 +145,11 @@ export function PlaybackOverlay({ nodeId }: { nodeId: string }) {
       </div>
 
       {screen.actions.length === 0 ? (
-        <div className="text-xs text-slate-500 italic px-2 py-3 text-center">
+        <div className="text-xs text-slate-500 italic px-3 py-4 text-center">
           Este nodo no tiene acciones salientes. Pulsa Esc para salir.
         </div>
       ) : (
-        <div className="space-y-1.5 max-h-[260px] overflow-y-auto">
+        <div className="p-2 space-y-1.5 overflow-y-auto">
           {screen.actions.map((action) => {
             const api = getApiCall(action.id);
             const targetTitle = getScreen(action.targetScreen)?.title ?? "?";
@@ -84,7 +181,6 @@ export function PlaybackOverlay({ nodeId }: { nodeId: string }) {
                     </div>
                     <div className="text-[10px] text-slate-500 truncate">→ {targetTitle}</div>
 
-                    {/* Conditions preview (when blocked, show what's missing) */}
                     {blocked && (
                       <div className="mt-1 space-y-0.5">
                         {unmet.map((c, i) => (
@@ -96,7 +192,6 @@ export function PlaybackOverlay({ nodeId }: { nodeId: string }) {
                       </div>
                     )}
 
-                    {/* Effects preview */}
                     {!blocked && action.effects && action.effects.length > 0 && (
                       <div className="flex items-center gap-1 mt-0.5 text-[10px] text-fuchsia-300/80">
                         <Sparkles className="w-2.5 h-2.5" />
@@ -120,7 +215,6 @@ export function PlaybackOverlay({ nodeId }: { nodeId: string }) {
                   </div>
                 </button>
 
-                {/* Error path as secondary option */}
                 {action.errorTargetScreen && !blocked && (
                   <button
                     onClick={() => handleChoose(action.errorTargetScreen!, action.id)}

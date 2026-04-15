@@ -25,6 +25,7 @@ import { ApiEdge } from "./ApiEdge";
 import { DetailPanel } from "./DetailPanel";
 import { SearchDialog } from "./SearchDialog";
 import { VariablesPanel } from "./VariablesPanel";
+import { PlaybackOverlay } from "./PlaybackOverlay";
 import { useDiagramStore } from "../store/useDiagramStore";
 import { usePreferencesStore } from "../store/usePreferencesStore";
 import { buildFlowElements } from "../utils/layoutEngine";
@@ -59,7 +60,7 @@ export function DiagramCanvas() {
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-  const { fitView, setCenter, getNode } = useReactFlow();
+  const { fitView } = useReactFlow();
   const isInitialMount = useRef(true);
 
   // Sync when diagram data changes
@@ -77,15 +78,10 @@ export function DiagramCanvas() {
     }
   }, [fitView]);
 
-  // When playback active node changes, re-center on it
-  useEffect(() => {
-    if (!playback.active || !playback.nodeId) return;
-    const node = getNode(playback.nodeId);
-    if (!node) return;
-    const x = node.position.x + (node.width ?? 280) / 2;
-    const y = node.position.y + (node.height ?? 160) / 2;
-    setCenter(x, y, { duration: 500, zoom: 1.05 });
-  }, [playback.active, playback.nodeId, setCenter, getNode]);
+  // NOTE: Playback auto-recentering is handled INSIDE PlaybackOverlay on
+  // user action (next click → short pan, no zoom change). We deliberately
+  // do NOT animate on every playback.nodeId change here, which previously
+  // caused a jarring zoom-in each step.
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -336,6 +332,7 @@ export function DiagramCanvas() {
 
       {selection.kind !== "none" && !playback.active && <DetailPanel />}
       {playback.active && <VariablesPanel />}
+      {playback.active && playback.nodeId && <PlaybackOverlay nodeId={playback.nodeId} />}
       <SearchDialog />
     </div>
   );
