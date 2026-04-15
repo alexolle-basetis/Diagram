@@ -423,28 +423,31 @@ function EdgeEditor({
   );
   const endpoints = useMemo(() => extractEndpoints(resolvedSpec), [resolvedSpec]);
   /**
-   * Build a patch that only overwrites API-Call fields that are currently
-   * empty/undefined, merging in values synthesized from the OpenAPI operation.
-   * Never clobbers manually-entered content.
+   * Build a patch from the OpenAPI spec when the user changes endpoint or
+   * method. If the operation exists in the spec, ALL prefillable fields are
+   * overwritten (the user asked to "switch to this endpoint" — we give them
+   * the canonical payload). If the operation is NOT in the spec
+   * (prefillFromEndpoint → null), only endpoint/method are updated and the
+   * rest of the fields are left untouched so manual data isn't wiped.
    */
   const buildPrefillPatch = (method: string, path: string) => {
     if (!apiCall) return {};
-    const pre = prefillFromEndpoint(resolvedSpec, method, path);
     const patch: Partial<import("../types/diagram").ApiCall> = { endpoint: path, method };
-    if (pre.requestBody && !apiCall.requestBody) patch.requestBody = pre.requestBody;
-    if (pre.statusCode && !apiCall.statusCode) patch.statusCode = pre.statusCode;
-    if (pre.responsePayload && !apiCall.responsePayload) patch.responsePayload = pre.responsePayload;
-    if (pre.errorPayload && !apiCall.errorPayload) patch.errorPayload = pre.errorPayload;
-    if (pre.headers) {
-      const existing = apiCall.headers ?? {};
-      const merged = { ...pre.headers, ...existing };
-      // Only update if something actually changed
-      if (JSON.stringify(merged) !== JSON.stringify(existing)) patch.headers = merged;
+    const pre = prefillFromEndpoint(resolvedSpec, method, path);
+    if (pre) {
+      // Overwrite — spec is authoritative for this endpoint. Fields absent from
+      // the spec are CLEARED intentionally (e.g. switching from POST to GET
+      // removes the request body).
+      patch.requestBody = pre.requestBody;
+      patch.statusCode = pre.statusCode;
+      patch.responsePayload = pre.responsePayload;
+      patch.errorPayload = pre.errorPayload;
+      patch.headers = pre.headers;
     }
     return patch;
   };
 
-  // When user types/selects an endpoint that matches the spec, sync method + prefill.
+  // Triggered when the user types an endpoint (combobox free text).
   const handleEndpointChange = (newEndpoint: string) => {
     if (!apiCall) return;
     const match = endpoints.find((e) => e.path === newEndpoint);
@@ -453,6 +456,13 @@ function EdgeEditor({
     } else {
       updateApiCall(actionId, { endpoint: newEndpoint });
     }
+  };
+
+  // Triggered when the user changes the HTTP method via the <select>. If the
+  // new (method, current-endpoint) combo exists in the spec, re-prefill.
+  const handleMethodChange = (newMethod: string) => {
+    if (!apiCall) return;
+    updateApiCall(actionId, buildPrefillPatch(newMethod, apiCall.endpoint));
   };
 
   if (!sourceScreen || !action) return <p className="text-sm text-slate-500">Conexión no encontrada</p>;
@@ -527,7 +537,7 @@ function EdgeEditor({
             <div className="flex gap-2">
               <select
                 value={apiCall.method}
-                onChange={(e) => updateApiCall(actionId, { method: e.target.value })}
+                onChange={(e) => handleMethodChange(e.target.value)}
                 className="input-field w-24 !py-1.5 text-xs font-mono font-bold"
               >
                 {methods.map((m) => <option key={m} value={m}>{m}</option>)}

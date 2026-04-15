@@ -231,6 +231,14 @@ export function sampleResponseFor(
   return firstExampleOrSchema(response?.content, doc);
 }
 
+export interface EndpointPrefill {
+  requestBody?: string;
+  statusCode?: number;
+  responsePayload?: string;
+  errorPayload?: string;
+  headers?: Record<string, string>;
+}
+
 /**
  * All-in-one prefill helper. Given an endpoint (method + path), returns the
  * subset of ApiCall fields we can derive from the OpenAPI operation:
@@ -239,30 +247,22 @@ export function sampleResponseFor(
  *  - responsePayload: example of that success response
  *  - errorPayload:    example of first 4xx/5xx response
  *  - headers:         template map from `in: header` parameters (name → example|"")
+ *
+ * Returns `null` if the operation does NOT exist in the spec (method+path not
+ * declared). Callers use that signal to skip overwriting fields — a user
+ * switching to an undocumented combination keeps their manual data.
  */
 export function prefillFromEndpoint(
   ref: OpenApiRef | null | undefined,
   method: string,
   path: string,
-): {
-  requestBody?: string;
-  statusCode?: number;
-  responsePayload?: string;
-  errorPayload?: string;
-  headers?: Record<string, string>;
-} {
-  if (!ref) return {};
+): EndpointPrefill | null {
+  if (!ref) return null;
   const doc = ref.spec as OpenApiDoc;
   const op = doc.paths?.[path]?.[method.toLowerCase()] as OpenApiOperation | undefined;
-  if (!op) return {};
+  if (!op) return null;
 
-  const out: {
-    requestBody?: string;
-    statusCode?: number;
-    responsePayload?: string;
-    errorPayload?: string;
-    headers?: Record<string, string>;
-  } = {};
+  const out: EndpointPrefill = {};
 
   // Request body
   const body = firstExampleOrSchema(op.requestBody?.content, doc);
