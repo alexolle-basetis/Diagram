@@ -422,8 +422,6 @@ function EdgeEditor({
     [diagram, sourceScreen, targetScreen]
   );
   const endpoints = useMemo(() => extractEndpoints(resolvedSpec), [resolvedSpec]);
-  const datalistId = `endpoints-${actionId}`;
-
   // When user types/selects an endpoint that matches the spec, also sync method.
   const handleEndpointChange = (newEndpoint: string) => {
     if (!apiCall) return;
@@ -518,22 +516,20 @@ function EdgeEditor({
               >
                 {methods.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
-              <input
+              <EndpointCombobox
                 value={apiCall.endpoint}
-                onChange={(e) => handleEndpointChange(e.target.value)}
-                list={endpoints.length > 0 ? datalistId : undefined}
-                className="input-field flex-1 !py-1.5 font-mono text-xs text-amber-200"
+                endpoints={endpoints}
+                onChangeText={(v) => handleEndpointChange(v)}
+                onPick={(ep) => {
+                  const sample = sampleResponseFor(resolvedSpec, ep.method, ep.path, apiCall.statusCode ?? 200);
+                  updateApiCall(actionId, {
+                    endpoint: ep.path,
+                    method: ep.method,
+                    ...(sample && !apiCall.responsePayload ? { responsePayload: sample } : {}),
+                  });
+                }}
                 placeholder="/api/v1/..."
               />
-              {endpoints.length > 0 && (
-                <datalist id={datalistId}>
-                  {endpoints.map((ep, i) => (
-                    <option key={i} value={ep.path}>
-                      {ep.method} {ep.summary ?? ep.operationId ?? ""}
-                    </option>
-                  ))}
-                </datalist>
-              )}
             </div>
           </Field>
 
@@ -1076,6 +1072,132 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange: (t: string[])
         className="bg-transparent text-xs text-slate-300 outline-none w-16 placeholder:text-slate-600"
         placeholder="+ tag"
       />
+    </div>
+  );
+}
+
+// ── Endpoint combobox (filterable dropdown backed by OpenAPI spec) ───
+// Custom combobox (instead of native <datalist>) so it actually works inside
+// the scrollable DetailPanel and can show duplicates (same path, different
+// methods) without the browser silently deduplicating them.
+function EndpointCombobox({
+  value,
+  endpoints,
+  onChangeText,
+  onPick,
+  placeholder,
+}: {
+  value: string;
+  endpoints: import("../lib/openApiService").OpenApiEndpoint[];
+  onChangeText: (v: string) => void;
+  onPick: (ep: import("../lib/openApiService").OpenApiEndpoint) => void;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [highlighted, setHighlighted] = useState(0);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    if (endpoints.length === 0) return [];
+    const q = value.trim().toLowerCase();
+    if (!q) return endpoints;
+    return endpoints.filter((ep) =>
+      ep.path.toLowerCase().includes(q)
+      || ep.method.toLowerCase().includes(q)
+      || ep.summary?.toLowerCase().includes(q)
+      || ep.operationId?.toLowerCase().includes(q)
+    );
+  }, [endpoints, value]);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (!open && (e.key === "ArrowDown" || e.key === "Enter")) {
+      setOpen(true);
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlighted((h) => Math.min(filtered.length - 1, h + 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlighted((h) => Math.max(0, h - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const pick = filtered[highlighted];
+      if (pick) {
+        onPick(pick);
+        setOpen(false);
+      }
+    } else if (e.key === "Escape") {
+      setOpen(false);
+    }
+  };
+
+  const methodColor = (m: string) => {
+    switch (m.toUpperCase()) {
+      case "GET": return "text-emerald-400";
+      case "POST": return "text-blue-400";
+      case "PUT":
+      case "PATCH": return "text-amber-400";
+      case "DELETE": return "text-red-400";
+      default: return "text-slate-300";
+    }
+  };
+
+  return (
+    <div ref={wrapperRef} className="flex-1 relative">
+      <input
+        value={value}
+        onChange={(e) => { onChangeText(e.target.value); setOpen(true); setHighlighted(0); }}
+        onFocus={() => endpoints.length > 0 && setOpen(true)}
+        onKeyDown={handleKeyDown}
+        className="input-field w-full !py-1.5 font-mono text-xs text-amber-200"
+        placeholder={placeholder}
+      />
+
+      {open && filtered.length > 0 && (
+        <div className="absolute left-0 right-0 top-full mt-1 z-50 max-h-[260px] overflow-y-auto rounded-md border border-slate-700 bg-slate-900 shadow-2xl">
+          {filtered.map((ep, i) => {
+            const key = `${ep.method}-${ep.path}-${i}`;
+            const isActive = i === highlighted;
+            return (
+              <button
+                key={key}
+                type="button"
+                onMouseEnter={() => setHighlighted(i)}
+                onClick={() => { onPick(ep); setOpen(false); }}
+                className={`flex items-start gap-2 w-full text-left px-2 py-1.5 text-[11px] font-mono transition-colors ${
+                  isActive ? "bg-violet-500/15" : "hover:bg-slate-800"
+                }`}
+              >
+                <span className={`font-bold shrink-0 w-12 ${methodColor(ep.method)}`}>{ep.method}</span>
+                <span className="text-slate-200 truncate flex-1">{ep.path}</span>
+                {ep.summary && (
+                  <span className="text-slate-500 truncate text-[10px] font-sans max-w-[40%]" title={ep.summary}>
+                    {ep.summary}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {open && filtered.length === 0 && endpoints.length > 0 && (
+        <div className="absolute left-0 right-0 top-full mt-1 z-50 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] text-slate-500 italic">
+          Sin coincidencias — seguirá como endpoint libre
+        </div>
+      )}
     </div>
   );
 }
