@@ -108,6 +108,112 @@ export function resolveSpecForAction(
   return diagram.openApi ?? null;
 }
 
+// ── Schema → example synthesis ────────────────────────────────────────
+// OpenAPI lets operations declare schemas without explicit `example`/`examples`.
+// When that happens, we synthesize a minimal example so the API Call editor
+// still gets a helpful placeholder instead of an empty field.
+
+interface OpenApiSchema {
+  type?: string;
+  format?: string;
+  example?: unknown;
+  default?: unknown;
+  enum?: unknown[];
+  properties?: Record<string, OpenApiSchema>;
+  items?: OpenApiSchema;
+  required?: string[];
+  oneOf?: OpenApiSchema[];
+  anyOf?: OpenApiSchema[];
+  allOf?: OpenApiSchema[];
+  $ref?: string;
+}
+
+function derefSchema(schema: OpenApiSchema | undefined, doc: OpenApiDoc): OpenApiSchema | undefined {
+  if (!schema) return undefined;
+  if (!schema.$ref) return schema;
+  // Resolve local $refs like "#/components/schemas/Pet"
+  const parts = schema.$ref.replace(/^#\//, "").split("/");
+  let node: unknown = doc;
+  for (const p of parts) {
+    if (node && typeof node === "object" && p in (node as Record<string, unknown>)) {
+      node = (node as Record<string, unknown>)[p];
+    } else {
+      return undefined;
+    }
+  }
+  return node as OpenApiSchema;
+}
+
+/** Very light example synthesizer (handles primitives, arrays, objects). */
+function generateExample(schema: OpenApiSchema | undefined, doc: OpenApiDoc, depth = 0): unknown {
+  if (!schema || depth > 6) return null;
+  const s = schema.$ref ? derefSchema(schema, doc) : schema;
+  if (!s) return null;
+  if (s.example !== undefined) return s.example;
+  if (s.default !== undefined) return s.default;
+  if (s.enum && s.enum.length > 0) return s.enum[0];
+
+  // allOf → merge properties (simple)
+  if (s.allOf) {
+    const merged: Record<string, unknown> = {};
+    for (const sub of s.allOf) {
+      const part = generateExample(sub, doc, depth + 1);
+      if (part && typeof part === "object" && !Array.isArray(part)) {
+        Object.assign(merged, part);
+      }
+    }
+    return merged;
+  }
+  if (s.oneOf?.[0]) return generateExample(s.oneOf[0], doc, depth + 1);
+  if (s.anyOf?.[0]) return generateExample(s.anyOf[0], doc, depth + 1);
+
+  switch (s.type) {
+    case "string":
+      if (s.format === "date-time") return "2025-01-01T00:00:00Z";
+      if (s.format === "date") return "2025-01-01";
+      if (s.format === "email") return "user@example.com";
+      if (s.format === "uuid") return "00000000-0000-0000-0000-000000000000";
+      return "string";
+    case "integer": return 0;
+    case "number": return 0.0;
+    case "boolean": return false;
+    case "array": return [generateExample(s.items, doc, depth + 1)].filter((v) => v !== null);
+    case "object":
+    default: {
+      if (!s.properties) return {};
+      const out: Record<string, unknown> = {};
+      for (const [key, subSchema] of Object.entries(s.properties)) {
+        out[key] = generateExample(subSchema, doc, depth + 1);
+      }
+      return out;
+    }
+  }
+}
+
+/** Pick the first content entry with a usable example or schema. */
+function firstExampleOrSchema(
+  content: Record<string, { example?: unknown; examples?: Record<string, { value?: unknown }>; schema?: OpenApiSchema }> | undefined,
+  doc: OpenApiDoc,
+): string | null {
+  if (!content) return null;
+  for (const mime of Object.values(content)) {
+    if (mime.example !== undefined) return JSON.stringify(mime.example, null, 2);
+    const firstEx = mime.examples && Object.values(mime.examples)[0];
+    if (firstEx?.value !== undefined) return JSON.stringify(firstEx.value, null, 2);
+    if (mime.schema) {
+      const synth = generateExample(mime.schema, doc);
+      if (synth !== null && synth !== undefined) return JSON.stringify(synth, null, 2);
+    }
+  }
+  return null;
+}
+
+interface OpenApiOperation {
+  parameters?: Array<{ name?: string; in?: string; required?: boolean; schema?: OpenApiSchema; example?: unknown }>;
+  requestBody?: { content?: Record<string, { example?: unknown; examples?: Record<string, { value?: unknown }>; schema?: OpenApiSchema }> };
+  responses?: Record<string, { content?: Record<string, { example?: unknown; examples?: Record<string, { value?: unknown }>; schema?: OpenApiSchema }> }>;
+}
+
 /**
  * Try to extract a sample response payload for an endpoint+status.
  * Returns stringified JSON or null if no example is available in the spec.
@@ -120,17 +226,77 @@ export function sampleResponseFor(
 ): string | null {
   if (!ref) return null;
   const doc = ref.spec as OpenApiDoc;
-  const pathItem = doc.paths?.[path];
-  if (!pathItem) return null;
-  const op = pathItem[method.toLowerCase()] as { responses?: Record<string, unknown> } | undefined;
-  const response = op?.responses?.[String(statusCode)] as
-    | { content?: Record<string, { example?: unknown; examples?: Record<string, { value?: unknown }> }> }
-    | undefined;
-  if (!response?.content) return null;
-  for (const mime of Object.values(response.content)) {
-    if (mime.example !== undefined) return JSON.stringify(mime.example, null, 2);
-    const first = mime.examples && Object.values(mime.examples)[0];
-    if (first?.value !== undefined) return JSON.stringify(first.value, null, 2);
+  const op = doc.paths?.[path]?.[method.toLowerCase()] as OpenApiOperation | undefined;
+  const response = op?.responses?.[String(statusCode)];
+  return firstExampleOrSchema(response?.content, doc);
+}
+
+/**
+ * All-in-one prefill helper. Given an endpoint (method + path), returns the
+ * subset of ApiCall fields we can derive from the OpenAPI operation:
+ *  - requestBody: from requestBody.content (example or synthesized from schema)
+ *  - statusCode:  first declared 2xx response (200/201/204) fallback to first
+ *  - responsePayload: example of that success response
+ *  - errorPayload:    example of first 4xx/5xx response
+ *  - headers:         template map from `in: header` parameters (name → example|"")
+ */
+export function prefillFromEndpoint(
+  ref: OpenApiRef | null | undefined,
+  method: string,
+  path: string,
+): {
+  requestBody?: string;
+  statusCode?: number;
+  responsePayload?: string;
+  errorPayload?: string;
+  headers?: Record<string, string>;
+} {
+  if (!ref) return {};
+  const doc = ref.spec as OpenApiDoc;
+  const op = doc.paths?.[path]?.[method.toLowerCase()] as OpenApiOperation | undefined;
+  if (!op) return {};
+
+  const out: {
+    requestBody?: string;
+    statusCode?: number;
+    responsePayload?: string;
+    errorPayload?: string;
+    headers?: Record<string, string>;
+  } = {};
+
+  // Request body
+  const body = firstExampleOrSchema(op.requestBody?.content, doc);
+  if (body) out.requestBody = body;
+
+  // Success status: prefer 200, then 201, 204, 202, else first 2xx
+  const responses = op.responses ?? {};
+  const statusCodes = Object.keys(responses);
+  const successCode =
+    ["200", "201", "204", "202"].find((c) => c in responses)
+    ?? statusCodes.find((c) => /^2\d\d$/.test(c));
+  if (successCode) {
+    out.statusCode = Number(successCode);
+    const payload = firstExampleOrSchema(responses[successCode]?.content, doc);
+    if (payload) out.responsePayload = payload;
   }
-  return null;
+
+  // Error status: first 4xx/5xx
+  const errorCode = statusCodes.find((c) => /^[45]\d\d$/.test(c));
+  if (errorCode) {
+    const errPayload = firstExampleOrSchema(responses[errorCode]?.content, doc);
+    if (errPayload) out.errorPayload = errPayload;
+  }
+
+  // Header parameters: build a template map {name: example|""}
+  const headerParams = (op.parameters ?? []).filter((p) => p.in === "header" && p.name);
+  if (headerParams.length > 0) {
+    const headers: Record<string, string> = {};
+    for (const p of headerParams) {
+      const exampleVal = p.example ?? p.schema?.example ?? (p.schema ? generateExample(p.schema, doc) : "");
+      headers[p.name!] = exampleVal !== null && exampleVal !== undefined ? String(exampleVal) : "";
+    }
+    out.headers = headers;
+  }
+
+  return out;
 }

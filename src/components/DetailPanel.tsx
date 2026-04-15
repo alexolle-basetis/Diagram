@@ -8,7 +8,7 @@ import {
 import { useDiagramStore } from "../store/useDiagramStore";
 import { generateCurl } from "../utils/exportUtils";
 import { compressImage } from "../utils/imageUtils";
-import { extractEndpoints, resolveSpecForAction, sampleResponseFor } from "../lib/openApiService";
+import { extractEndpoints, resolveSpecForAction, prefillFromEndpoint } from "../lib/openApiService";
 import { Markdown } from "./Markdown";
 import { OpenApiDialog } from "./OpenApiDialog";
 import type { ScreenStatus, ScreenColor, ScreenIcon, NodeKind, VarDef, VarType, VarValue, Condition, Effect, CondOp } from "../types/diagram";
@@ -422,18 +422,34 @@ function EdgeEditor({
     [diagram, sourceScreen, targetScreen]
   );
   const endpoints = useMemo(() => extractEndpoints(resolvedSpec), [resolvedSpec]);
-  // When user types/selects an endpoint that matches the spec, also sync method.
+  /**
+   * Build a patch that only overwrites API-Call fields that are currently
+   * empty/undefined, merging in values synthesized from the OpenAPI operation.
+   * Never clobbers manually-entered content.
+   */
+  const buildPrefillPatch = (method: string, path: string) => {
+    if (!apiCall) return {};
+    const pre = prefillFromEndpoint(resolvedSpec, method, path);
+    const patch: Partial<import("../types/diagram").ApiCall> = { endpoint: path, method };
+    if (pre.requestBody && !apiCall.requestBody) patch.requestBody = pre.requestBody;
+    if (pre.statusCode && !apiCall.statusCode) patch.statusCode = pre.statusCode;
+    if (pre.responsePayload && !apiCall.responsePayload) patch.responsePayload = pre.responsePayload;
+    if (pre.errorPayload && !apiCall.errorPayload) patch.errorPayload = pre.errorPayload;
+    if (pre.headers) {
+      const existing = apiCall.headers ?? {};
+      const merged = { ...pre.headers, ...existing };
+      // Only update if something actually changed
+      if (JSON.stringify(merged) !== JSON.stringify(existing)) patch.headers = merged;
+    }
+    return patch;
+  };
+
+  // When user types/selects an endpoint that matches the spec, sync method + prefill.
   const handleEndpointChange = (newEndpoint: string) => {
     if (!apiCall) return;
     const match = endpoints.find((e) => e.path === newEndpoint);
     if (match) {
-      // Auto-fill method and, if available, a sample response.
-      const sample = sampleResponseFor(resolvedSpec, match.method, match.path, apiCall.statusCode ?? 200);
-      updateApiCall(actionId, {
-        endpoint: newEndpoint,
-        method: match.method,
-        ...(sample && !apiCall.responsePayload ? { responsePayload: sample } : {}),
-      });
+      updateApiCall(actionId, buildPrefillPatch(match.method, match.path));
     } else {
       updateApiCall(actionId, { endpoint: newEndpoint });
     }
@@ -520,14 +536,7 @@ function EdgeEditor({
                 value={apiCall.endpoint}
                 endpoints={endpoints}
                 onChangeText={(v) => handleEndpointChange(v)}
-                onPick={(ep) => {
-                  const sample = sampleResponseFor(resolvedSpec, ep.method, ep.path, apiCall.statusCode ?? 200);
-                  updateApiCall(actionId, {
-                    endpoint: ep.path,
-                    method: ep.method,
-                    ...(sample && !apiCall.responsePayload ? { responsePayload: sample } : {}),
-                  });
-                }}
+                onPick={(ep) => updateApiCall(actionId, buildPrefillPatch(ep.method, ep.path))}
                 placeholder="/api/v1/..."
               />
             </div>
