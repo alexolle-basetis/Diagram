@@ -1,14 +1,18 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import {
   X, Monitor, Globe, ArrowRight, Plus, Trash2, Copy, Check,
   AlertCircle, Upload, ImageIcon, Pencil, Eye, ChevronDown, ChevronRight,
+  BookOpen, Lock, Sparkles, Variable as VariableIcon,
 } from "lucide-react";
 import { useDiagramStore } from "../store/useDiagramStore";
 import { generateCurl } from "../utils/exportUtils";
 import { compressImage } from "../utils/imageUtils";
+import { extractEndpoints, resolveSpecForAction, sampleResponseFor } from "../lib/openApiService";
 import { Markdown } from "./Markdown";
-import type { ScreenStatus, ScreenColor, ScreenIcon } from "../types/diagram";
-import { STATUS_COLORS, SCREEN_COLORS, SCREEN_ICONS } from "../utils/layoutEngine";
+import { OpenApiDialog } from "./OpenApiDialog";
+import type { ScreenStatus, ScreenColor, ScreenIcon, NodeKind, VarDef, VarType, VarValue, Condition, Effect, CondOp } from "../types/diagram";
+import { collectVariables } from "../utils/variables";
+import { STATUS_COLORS, SCREEN_COLORS, SCREEN_ICONS, KIND_DEFAULTS } from "../utils/layoutEngine";
 
 const MIN_WIDTH = 320;
 const MAX_WIDTH = 800;
@@ -118,13 +122,51 @@ function ScreenEditor({ screenId }: { screenId: string }) {
   const setSelection = useDiagramStore((s) => s.setSelection);
   const getApiCall = useDiagramStore((s) => s.getApiCall);
   const setApiCall = useDiagramStore((s) => s.setApiCall);
+  const setScreenOpenApi = useDiagramStore((s) => s.setScreenOpenApi);
+  const [openApiDialogOpen, setOpenApiDialogOpen] = useState(false);
 
   if (!screen) return <p className="text-sm text-slate-500">Pantalla no encontrada</p>;
 
   const screenOptions = diagram.screens.filter((s) => s.id !== screenId);
+  const currentKind = screen.kind ?? "screen";
+
+  const handleKindChange = (kind: NodeKind) => {
+    const defaults = KIND_DEFAULTS[kind];
+    // If the user hadn't customized icon/color, apply sensible defaults for the new kind.
+    const patch: Parameters<typeof updateScreen>[1] = { kind };
+    if (!screen.icon) patch.icon = defaults.icon;
+    if (!screen.color) patch.color = defaults.color;
+    updateScreen(screenId, patch);
+  };
 
   return (
     <>
+      {/* Kind selector */}
+      <Field label="Tipo de nodo">
+        <div className="grid grid-cols-3 gap-1.5">
+          {(Object.keys(KIND_DEFAULTS) as NodeKind[]).map((k) => {
+            const def = KIND_DEFAULTS[k];
+            const Ic = SCREEN_ICONS[def.icon].icon;
+            const active = currentKind === k;
+            return (
+              <button
+                key={k}
+                onClick={() => handleKindChange(k)}
+                className={`flex flex-col items-center gap-1 py-2 rounded-md border transition-all text-[10px] ${
+                  active
+                    ? "border-violet-500 bg-violet-500/10 text-violet-300"
+                    : "border-slate-700 bg-slate-800 text-slate-400 hover:border-slate-500 hover:text-slate-200"
+                }`}
+                title={def.label}
+              >
+                <Ic className="w-4 h-4" />
+                <span className="truncate w-full px-1 text-center">{def.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+
       {/* Title */}
       <Field label="Título">
         <input
@@ -142,6 +184,35 @@ function ScreenEditor({ screenId }: { screenId: string }) {
         placeholder="Descripción de la pantalla..."
         rows={2}
       />
+
+      {/* OpenAPI per-node (only for external-api kind) */}
+      {currentKind === "external-api" && (
+        <Field label="OpenAPI de este nodo">
+          <button
+            onClick={() => setOpenApiDialogOpen(true)}
+            className={`flex items-center gap-2 w-full py-2 px-3 text-xs rounded-md border transition-colors ${
+              screen.openApi
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                : "border-slate-700 bg-slate-800 text-slate-400 hover:border-slate-500 hover:text-slate-200"
+            }`}
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            {screen.openApi
+              ? <span className="truncate flex-1 text-left">{screen.openApi.title ?? "Spec cargada"}</span>
+              : <span>Cargar OpenAPI para este nodo</span>
+            }
+          </button>
+          {openApiDialogOpen && (
+            <OpenApiDialog
+              open={openApiDialogOpen}
+              onClose={() => setOpenApiDialogOpen(false)}
+              value={screen.openApi}
+              onChange={(ref) => setScreenOpenApi(screenId, ref)}
+              title={`OpenAPI de "${screen.title}"`}
+            />
+          )}
+        </Field>
+      )}
 
       {/* Status */}
       <Field label="Estado">
@@ -233,6 +304,12 @@ function ScreenEditor({ screenId }: { screenId: string }) {
         />
       </Field>
 
+      {/* Variables */}
+      <VariablesEditor
+        variables={screen.variables ?? []}
+        onChange={(vars) => updateScreen(screenId, { variables: vars.length > 0 ? vars : undefined })}
+      />
+
       {/* Actions */}
       <div>
         <div className="flex items-center justify-between mb-2">
@@ -287,6 +364,7 @@ function EdgeEditor({
 }) {
   const sourceScreen = useDiagramStore((s) => s.getScreen(sourceScreenId));
   const targetScreen = useDiagramStore((s) => s.getScreen(targetScreenId));
+  const diagram = useDiagramStore((s) => s.diagram);
   const apiCall = useDiagramStore((s) => s.getApiCall(actionId));
   const updateApiCall = useDiagramStore((s) => s.updateApiCall);
   const setApiCall = useDiagramStore((s) => s.setApiCall);
@@ -296,6 +374,31 @@ function EdgeEditor({
   const action = sourceScreen?.actions.find((a) => a.id === actionId);
   const [copiedCurl, setCopiedCurl] = useState(false);
   const [activeTab, setActiveTab] = useState<"response" | "error" | "headers">("response");
+
+  // Resolve the OpenAPI spec that applies to this action (per-node wins over global)
+  const resolvedSpec = useMemo(
+    () => resolveSpecForAction(diagram, sourceScreen, targetScreen),
+    [diagram, sourceScreen, targetScreen]
+  );
+  const endpoints = useMemo(() => extractEndpoints(resolvedSpec), [resolvedSpec]);
+  const datalistId = `endpoints-${actionId}`;
+
+  // When user types/selects an endpoint that matches the spec, also sync method.
+  const handleEndpointChange = (newEndpoint: string) => {
+    if (!apiCall) return;
+    const match = endpoints.find((e) => e.path === newEndpoint);
+    if (match) {
+      // Auto-fill method and, if available, a sample response.
+      const sample = sampleResponseFor(resolvedSpec, match.method, match.path, apiCall.statusCode ?? 200);
+      updateApiCall(actionId, {
+        endpoint: newEndpoint,
+        method: match.method,
+        ...(sample && !apiCall.responsePayload ? { responsePayload: sample } : {}),
+      });
+    } else {
+      updateApiCall(actionId, { endpoint: newEndpoint });
+    }
+  };
 
   if (!sourceScreen || !action) return <p className="text-sm text-slate-500">Conexión no encontrada</p>;
 
@@ -327,6 +430,20 @@ function EdgeEditor({
         rows={3}
       />
 
+      {/* Conditions (variables required to take this action during playback) */}
+      <ConditionsEditor
+        conditions={action.conditions ?? []}
+        onChange={(c) => updateAction(sourceScreenId, actionId, { conditions: c.length > 0 ? c : undefined })}
+        availableVars={collectVariables(diagram)}
+      />
+
+      {/* Effects (variables modified when this action is taken during playback) */}
+      <EffectsEditor
+        effects={action.effects ?? []}
+        onChange={(e) => updateAction(sourceScreenId, actionId, { effects: e.length > 0 ? e : undefined })}
+        availableVars={collectVariables(diagram)}
+      />
+
       {!apiCall ? (
         <button
           onClick={() => setApiCall({ actionId, method: "GET", endpoint: "/api/v1/" })}
@@ -336,7 +453,10 @@ function EdgeEditor({
         </button>
       ) : (
         <>
-          <Field label="Endpoint">
+          <Field label={endpoints.length > 0
+            ? <span className="flex items-center gap-1">Endpoint <span className="text-[9px] text-emerald-400 font-mono normal-case">· {endpoints.length} sugerencias OpenAPI</span></span>
+            : "Endpoint"
+          }>
             <div className="flex gap-2">
               <select
                 value={apiCall.method}
@@ -347,10 +467,20 @@ function EdgeEditor({
               </select>
               <input
                 value={apiCall.endpoint}
-                onChange={(e) => updateApiCall(actionId, { endpoint: e.target.value })}
+                onChange={(e) => handleEndpointChange(e.target.value)}
+                list={endpoints.length > 0 ? datalistId : undefined}
                 className="input-field flex-1 !py-1.5 font-mono text-xs text-amber-200"
                 placeholder="/api/v1/..."
               />
+              {endpoints.length > 0 && (
+                <datalist id={datalistId}>
+                  {endpoints.map((ep, i) => (
+                    <option key={i} value={ep.path}>
+                      {ep.method} {ep.summary ?? ep.operationId ?? ""}
+                    </option>
+                  ))}
+                </datalist>
+              )}
             </div>
           </Field>
 
@@ -739,3 +869,458 @@ function HeadersEditor({ headers, onChange }: { headers: Record<string, string>;
     </div>
   );
 }
+
+// ── Variable definitions editor (ScreenEditor) ───────────────────────
+function VariablesEditor({
+  variables,
+  onChange,
+}: {
+  variables: VarDef[];
+  onChange: (v: VarDef[]) => void;
+}) {
+  const addVar = () => {
+    const baseName = "var_" + (variables.length + 1);
+    onChange([...variables, { name: baseName, type: "enum", values: ["valor1", "valor2"], defaultValue: "valor1" }]);
+  };
+
+  const updateVar = (idx: number, patch: Partial<VarDef>) => {
+    onChange(variables.map((v, i) => (i === idx ? { ...v, ...patch } : v)));
+  };
+
+  const removeVar = (idx: number) => {
+    onChange(variables.filter((_, i) => i !== idx));
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <VariableIcon className="w-3 h-3" /> Variables ({variables.length})
+        </h3>
+        <button
+          onClick={addVar}
+          className="flex items-center gap-1 text-xs text-violet-400 hover:text-violet-300 transition-colors"
+        >
+          <Plus className="w-3 h-3" /> Añadir
+        </button>
+      </div>
+
+      {variables.length === 0 ? (
+        <p className="text-[11px] text-slate-600 italic">
+          Declara variables aquí (p.ej. <code>estado_luz</code>) y úsalas como condiciones o efectos en las acciones.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {variables.map((v, i) => (
+            <VariableRow
+              key={i}
+              def={v}
+              onChange={(patch) => updateVar(i, patch)}
+              onDelete={() => removeVar(i)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VariableRow({
+  def,
+  onChange,
+  onDelete,
+}: {
+  def: VarDef;
+  onChange: (patch: Partial<VarDef>) => void;
+  onDelete: () => void;
+}) {
+  const handleTypeChange = (type: VarType) => {
+    // Reset default to a sensible value for the new type.
+    let defaultValue: VarValue = "";
+    let values: string[] | undefined;
+    if (type === "enum") {
+      values = def.values && def.values.length > 0 ? def.values : ["valor1", "valor2"];
+      defaultValue = values[0];
+    } else if (type === "boolean") {
+      defaultValue = false;
+    } else if (type === "number") {
+      defaultValue = 0;
+    } else {
+      defaultValue = "";
+    }
+    onChange({ type, values, defaultValue });
+  };
+
+  return (
+    <div className="rounded-lg border border-slate-700/60 bg-slate-800/50 p-2 space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <input
+          value={def.name}
+          onChange={(e) => onChange({ name: e.target.value.replace(/[^a-zA-Z0-9_]/g, "_") })}
+          className="input-field flex-1 !py-1 text-xs font-mono text-violet-300"
+          placeholder="nombre_variable"
+        />
+        <select
+          value={def.type}
+          onChange={(e) => handleTypeChange(e.target.value as VarType)}
+          className="input-field !py-1 text-xs w-24"
+        >
+          <option value="enum">Enum</option>
+          <option value="boolean">Boolean</option>
+          <option value="number">Número</option>
+          <option value="text">Texto</option>
+        </select>
+        <button onClick={onDelete} className="p-1 text-slate-500 hover:text-red-400 transition-colors" title="Eliminar variable">
+          <Trash2 className="w-3 h-3" />
+        </button>
+      </div>
+
+      {def.type === "enum" && (
+        <div>
+          <div className="text-[10px] text-slate-500 mb-1">Valores permitidos (separados por coma)</div>
+          <input
+            value={(def.values ?? []).join(", ")}
+            onChange={(e) => {
+              const values = e.target.value.split(",").map((s) => s.trim()).filter(Boolean);
+              const newDefault = values.includes(String(def.defaultValue)) ? def.defaultValue : (values[0] ?? "");
+              onChange({ values, defaultValue: newDefault });
+            }}
+            className="input-field !py-1 text-xs font-mono"
+            placeholder="encendida, apagada"
+          />
+        </div>
+      )}
+
+      <div className="flex items-center gap-1.5">
+        <span className="text-[10px] text-slate-500 shrink-0">Default:</span>
+        {def.type === "enum" && (
+          <select
+            value={String(def.defaultValue)}
+            onChange={(e) => onChange({ defaultValue: e.target.value })}
+            className="input-field flex-1 !py-1 text-xs font-mono"
+          >
+            {(def.values ?? []).map((v) => <option key={v} value={v}>{v}</option>)}
+          </select>
+        )}
+        {def.type === "boolean" && (
+          <select
+            value={String(def.defaultValue)}
+            onChange={(e) => onChange({ defaultValue: e.target.value === "true" })}
+            className="input-field flex-1 !py-1 text-xs font-mono"
+          >
+            <option value="false">false</option>
+            <option value="true">true</option>
+          </select>
+        )}
+        {def.type === "number" && (
+          <input
+            type="number"
+            value={Number(def.defaultValue)}
+            onChange={(e) => onChange({ defaultValue: Number(e.target.value) })}
+            className="input-field flex-1 !py-1 text-xs font-mono"
+          />
+        )}
+        {def.type === "text" && (
+          <input
+            value={String(def.defaultValue)}
+            onChange={(e) => onChange({ defaultValue: e.target.value })}
+            className="input-field flex-1 !py-1 text-xs font-mono"
+            placeholder="valor por defecto"
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Conditions editor (EdgeEditor) ───────────────────────────────────
+export function ConditionsEditor({
+  conditions,
+  onChange,
+  availableVars,
+}: {
+  conditions: Condition[];
+  onChange: (c: Condition[]) => void;
+  availableVars: VarDef[];
+}) {
+  const addCond = () => {
+    const v = availableVars[0];
+    if (!v) return;
+    const op: CondOp = v.type === "boolean" ? "truthy" : "eq";
+    const value: VarValue = v.type === "boolean" ? true : v.defaultValue;
+    onChange([...conditions, { variable: v.name, op, value }]);
+  };
+
+  const updateCond = (idx: number, patch: Partial<Condition>) => {
+    onChange(conditions.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
+  };
+
+  const removeCond = (idx: number) => {
+    onChange(conditions.filter((_, i) => i !== idx));
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-violet-400/80">
+          <Lock className="w-3 h-3" /> Condiciones ({conditions.length})
+        </h3>
+        <button
+          onClick={addCond}
+          disabled={availableVars.length === 0}
+          className="flex items-center gap-1 text-xs text-violet-400 hover:text-violet-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          title={availableVars.length === 0 ? "Declara variables en alguna pantalla primero" : "Añadir condición"}
+        >
+          <Plus className="w-3 h-3" /> Añadir
+        </button>
+      </div>
+
+      {availableVars.length === 0 ? (
+        <p className="text-[11px] text-slate-600 italic">Sin variables declaradas en el diagrama.</p>
+      ) : conditions.length === 0 ? (
+        <p className="text-[11px] text-slate-600 italic">Sin condiciones — la acción siempre está disponible.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {conditions.map((c, i) => (
+            <ConditionRow
+              key={i}
+              cond={c}
+              vars={availableVars}
+              onChange={(patch) => updateCond(i, patch)}
+              onDelete={() => removeCond(i)}
+            />
+          ))}
+          {conditions.length > 1 && (
+            <p className="text-[10px] text-slate-500 italic">Todas las condiciones deben cumplirse (AND).</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConditionRow({
+  cond,
+  vars,
+  onChange,
+  onDelete,
+}: {
+  cond: Condition;
+  vars: VarDef[];
+  onChange: (patch: Partial<Condition>) => void;
+  onDelete: () => void;
+}) {
+  const def = vars.find((v) => v.name === cond.variable) ?? vars[0];
+  const ops: CondOp[] = def?.type === "boolean"
+    ? ["truthy", "falsy", "eq", "neq"]
+    : def?.type === "number"
+      ? ["eq", "neq", "gt", "gte", "lt", "lte"]
+      : ["eq", "neq"];
+
+  const opLabel: Record<CondOp, string> = {
+    eq: "=", neq: "≠", gt: ">", gte: "≥", lt: "<", lte: "≤", truthy: "es true", falsy: "es false",
+  };
+
+  const needsValue = cond.op !== "truthy" && cond.op !== "falsy";
+
+  return (
+    <div className="flex items-center gap-1 rounded-md bg-violet-500/5 border border-violet-500/20 px-1.5 py-1">
+      <select
+        value={cond.variable}
+        onChange={(e) => {
+          const newVar = vars.find((v) => v.name === e.target.value);
+          if (!newVar) return;
+          onChange({
+            variable: e.target.value,
+            op: newVar.type === "boolean" ? "truthy" : "eq",
+            value: newVar.defaultValue,
+          });
+        }}
+        className="input-field !py-0.5 text-[11px] font-mono text-violet-300 max-w-[110px]"
+      >
+        {vars.map((v) => <option key={v.name} value={v.name}>{v.name}</option>)}
+      </select>
+      <select
+        value={cond.op}
+        onChange={(e) => onChange({ op: e.target.value as CondOp })}
+        className="input-field !py-0.5 text-[11px] w-20"
+      >
+        {ops.map((o) => <option key={o} value={o}>{opLabel[o]}</option>)}
+      </select>
+      {needsValue && def && (
+        <ValueInput
+          def={def}
+          value={cond.value}
+          onChange={(value) => onChange({ value })}
+        />
+      )}
+      <button onClick={onDelete} className="p-0.5 text-slate-500 hover:text-red-400 transition-colors">
+        <Trash2 className="w-3 h-3" />
+      </button>
+    </div>
+  );
+}
+
+// ── Effects editor (EdgeEditor) ──────────────────────────────────────
+export function EffectsEditor({
+  effects,
+  onChange,
+  availableVars,
+}: {
+  effects: Effect[];
+  onChange: (e: Effect[]) => void;
+  availableVars: VarDef[];
+}) {
+  const addEffect = () => {
+    const v = availableVars[0];
+    if (!v) return;
+    onChange([...effects, { variable: v.name, op: "set", value: v.defaultValue }]);
+  };
+
+  const updateEffect = (idx: number, patch: Partial<Effect>) => {
+    onChange(effects.map((e, i) => (i === idx ? { ...e, ...patch } : e)));
+  };
+
+  const removeEffect = (idx: number) => {
+    onChange(effects.filter((_, i) => i !== idx));
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-fuchsia-400/80">
+          <Sparkles className="w-3 h-3" /> Efectos ({effects.length})
+        </h3>
+        <button
+          onClick={addEffect}
+          disabled={availableVars.length === 0}
+          className="flex items-center gap-1 text-xs text-fuchsia-400 hover:text-fuchsia-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Plus className="w-3 h-3" /> Añadir
+        </button>
+      </div>
+
+      {availableVars.length === 0 ? (
+        <p className="text-[11px] text-slate-600 italic">Sin variables declaradas en el diagrama.</p>
+      ) : effects.length === 0 ? (
+        <p className="text-[11px] text-slate-600 italic">Sin efectos — la acción no modifica variables.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {effects.map((e, i) => (
+            <EffectRow
+              key={i}
+              eff={e}
+              vars={availableVars}
+              onChange={(patch) => updateEffect(i, patch)}
+              onDelete={() => removeEffect(i)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EffectRow({
+  eff,
+  vars,
+  onChange,
+  onDelete,
+}: {
+  eff: Effect;
+  vars: VarDef[];
+  onChange: (patch: Partial<Effect>) => void;
+  onDelete: () => void;
+}) {
+  const def = vars.find((v) => v.name === eff.variable) ?? vars[0];
+  const isToggleable = def?.type === "boolean";
+
+  return (
+    <div className="flex items-center gap-1 rounded-md bg-fuchsia-500/5 border border-fuchsia-500/20 px-1.5 py-1">
+      <select
+        value={eff.variable}
+        onChange={(e) => {
+          const newVar = vars.find((v) => v.name === e.target.value);
+          if (!newVar) return;
+          onChange({ variable: e.target.value, op: "set", value: newVar.defaultValue });
+        }}
+        className="input-field !py-0.5 text-[11px] font-mono text-fuchsia-300 max-w-[110px]"
+      >
+        {vars.map((v) => <option key={v.name} value={v.name}>{v.name}</option>)}
+      </select>
+      <select
+        value={eff.op ?? "set"}
+        onChange={(e) => onChange({ op: e.target.value as Effect["op"] })}
+        className="input-field !py-0.5 text-[11px] w-16"
+      >
+        <option value="set">←</option>
+        {isToggleable && <option value="toggle">⇄</option>}
+      </select>
+      {(eff.op ?? "set") === "set" && def && (
+        <ValueInput
+          def={def}
+          value={eff.value}
+          onChange={(value) => onChange({ value })}
+        />
+      )}
+      <button onClick={onDelete} className="p-0.5 text-slate-500 hover:text-red-400 transition-colors">
+        <Trash2 className="w-3 h-3" />
+      </button>
+    </div>
+  );
+}
+
+// ── Reusable typed input for a variable value ────────────────────────
+export function ValueInput({
+  def,
+  value,
+  onChange,
+  className = "",
+}: {
+  def: VarDef;
+  value: VarValue | undefined;
+  onChange: (v: VarValue) => void;
+  className?: string;
+}) {
+  if (def.type === "enum") {
+    return (
+      <select
+        value={String(value ?? def.defaultValue)}
+        onChange={(e) => onChange(e.target.value)}
+        className={`input-field !py-0.5 text-[11px] font-mono flex-1 min-w-0 ${className}`}
+      >
+        {(def.values ?? []).map((v) => <option key={v} value={v}>{v}</option>)}
+      </select>
+    );
+  }
+  if (def.type === "boolean") {
+    return (
+      <select
+        value={String(value ?? def.defaultValue)}
+        onChange={(e) => onChange(e.target.value === "true")}
+        className={`input-field !py-0.5 text-[11px] font-mono flex-1 min-w-0 ${className}`}
+      >
+        <option value="false">false</option>
+        <option value="true">true</option>
+      </select>
+    );
+  }
+  if (def.type === "number") {
+    return (
+      <input
+        type="number"
+        value={Number(value ?? def.defaultValue)}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className={`input-field !py-0.5 text-[11px] font-mono flex-1 min-w-0 ${className}`}
+      />
+    );
+  }
+  return (
+    <input
+      value={String(value ?? def.defaultValue)}
+      onChange={(e) => onChange(e.target.value)}
+      className={`input-field !py-0.5 text-[11px] font-mono flex-1 min-w-0 ${className}`}
+    />
+  );
+}
+

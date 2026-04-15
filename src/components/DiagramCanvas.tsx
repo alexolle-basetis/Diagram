@@ -8,18 +8,22 @@ import {
   useEdgesState,
   useReactFlow,
   BackgroundVariant,
+  ConnectionMode,
   type NodeTypes,
   type EdgeTypes,
   type OnNodeDrag,
   type NodeMouseHandler,
   type OnConnect,
+  type OnConnectEnd,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { LogOut, ChevronRight } from "lucide-react";
 
 import { ScreenNode } from "./ScreenNode";
 import { ApiEdge } from "./ApiEdge";
 import { DetailPanel } from "./DetailPanel";
 import { SearchDialog } from "./SearchDialog";
+import { VariablesPanel } from "./VariablesPanel";
 import { useDiagramStore } from "../store/useDiagramStore";
 import { usePreferencesStore } from "../store/usePreferencesStore";
 import { buildFlowElements } from "../utils/layoutEngine";
@@ -40,7 +44,11 @@ export function DiagramCanvas() {
   const deleteAction = useDiagramStore((s) => s.deleteAction);
   const undo = useDiagramStore((s) => s.undo);
   const redo = useDiagramStore((s) => s.redo);
+  const playback = useDiagramStore((s) => s.playback);
+  const stopPlayback = useDiagramStore((s) => s.stopPlayback);
+  const stepBackPlayback = useDiagramStore((s) => s.stepBackPlayback);
   const theme = usePreferencesStore((s) => s.theme);
+  const edgeConnectMode = usePreferencesStore((s) => s.edgeConnectMode);
   const isLight = theme === "light";
 
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
@@ -50,13 +58,11 @@ export function DiagramCanvas() {
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-  const { fitView } = useReactFlow();
+  const { fitView, setCenter, getNode } = useReactFlow();
   const isInitialMount = useRef(true);
-  const diagramRef = useRef(diagram);
 
   // Sync when diagram data changes
   useEffect(() => {
-    diagramRef.current = diagram;
     const { nodes: newNodes, edges: newEdges } = buildFlowElements(diagram, nodePositions);
     setNodes(newNodes);
     setEdges(newEdges);
@@ -69,6 +75,16 @@ export function DiagramCanvas() {
       requestAnimationFrame(() => fitView({ padding: 0.15, duration: 300 }));
     }
   }, [fitView]);
+
+  // When playback active node changes, re-center on it
+  useEffect(() => {
+    if (!playback.active || !playback.nodeId) return;
+    const node = getNode(playback.nodeId);
+    if (!node) return;
+    const x = node.position.x + (node.width ?? 280) / 2;
+    const y = node.position.y + (node.height ?? 160) / 2;
+    setCenter(x, y, { duration: 500, zoom: 1.05 });
+  }, [playback.active, playback.nodeId, setCenter, getNode]);
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -94,15 +110,22 @@ export function DiagramCanvas() {
         }
       }
       if (e.key === "Escape") {
-        clearSelection();
+        if (useDiagramStore.getState().playback.active) {
+          stopPlayback();
+          requestAnimationFrame(() => fitView({ padding: 0.15, duration: 300 }));
+        } else {
+          clearSelection();
+        }
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [undo, redo, deleteScreen, deleteAction, clearSelection]);
+  }, [undo, redo, deleteScreen, deleteAction, clearSelection, stopPlayback, fitView]);
 
   const onNodeClick: NodeMouseHandler = useCallback(
     (_event, node) => {
+      // Ignore selection clicks during playback
+      if (useDiagramStore.getState().playback.active) return;
       setSelection({ kind: "screen", screenId: node.id });
     },
     [setSelection]
@@ -110,6 +133,7 @@ export function DiagramCanvas() {
 
   const onEdgeClick = useCallback(
     (_event: React.MouseEvent, edge: { id: string; source: string; target: string; data?: Record<string, unknown> }) => {
+      if (useDiagramStore.getState().playback.active) return;
       const actionId = (edge.data?.actionId as string) ?? "";
       setSelection({
         kind: "edge",
@@ -137,11 +161,13 @@ export function DiagramCanvas() {
   const onConnect: OnConnect = useCallback(
     (connection) => {
       if (!connection.source || !connection.target) return;
-      // Prevent self-connections from __new__ handle
-      if (connection.source === connection.target && connection.sourceHandle === "__new__") return;
+      const sourceHandle = connection.sourceHandle ?? "";
+      const isNewHandle = sourceHandle.startsWith("__new");
 
-      if (connection.sourceHandle === "__new__") {
-        // Create a new action pointing to the target screen
+      // Prevent self-connections when creating a new action
+      if (connection.source === connection.target && isNewHandle) return;
+
+      if (isNewHandle) {
         const actionId = addAction(connection.source, connection.target);
         setSelection({
           kind: "edge",
@@ -149,14 +175,13 @@ export function DiagramCanvas() {
           sourceScreenId: connection.source,
           targetScreenId: connection.target,
         });
-      } else if (connection.sourceHandle) {
-        // Reconnect an existing action to a new target
-        updateAction(connection.source, connection.sourceHandle, {
+      } else if (sourceHandle) {
+        updateAction(connection.source, sourceHandle, {
           targetScreen: connection.target,
         });
         setSelection({
           kind: "edge",
-          actionId: connection.sourceHandle,
+          actionId: sourceHandle,
           sourceScreenId: connection.source,
           targetScreenId: connection.target,
         });
@@ -164,6 +189,56 @@ export function DiagramCanvas() {
     },
     [addAction, updateAction, setSelection]
   );
+
+  // Intuitive drop: if the user ends a connection NOT on a handle but over a node,
+  // create the connection to that node anyway.
+  const onConnectEnd: OnConnectEnd = useCallback(
+    (_event, state) => {
+      if (state.isValid) return; // onConnect already handled it
+      const sourceId = state.fromNode?.id;
+      const toNode = state.toNode;
+      if (!sourceId || !toNode) return;
+      if (sourceId === toNode.id) return;
+
+      const sourceHandle = state.fromHandle?.id ?? "";
+      const isNewHandle = sourceHandle.startsWith("__new") || !sourceHandle;
+
+      if (isNewHandle) {
+        const actionId = addAction(sourceId, toNode.id);
+        setSelection({
+          kind: "edge",
+          actionId,
+          sourceScreenId: sourceId,
+          targetScreenId: toNode.id,
+        });
+      } else {
+        updateAction(sourceId, sourceHandle, { targetScreen: toNode.id });
+        setSelection({
+          kind: "edge",
+          actionId: sourceHandle,
+          sourceScreenId: sourceId,
+          targetScreenId: toNode.id,
+        });
+      }
+    },
+    [addAction, updateAction, setSelection]
+  );
+
+  const handleStepBack = useCallback(
+    (nodeId: string) => {
+      stepBackPlayback(nodeId);
+    },
+    [stepBackPlayback]
+  );
+
+  const handleExitPlayback = useCallback(() => {
+    stopPlayback();
+    requestAnimationFrame(() => fitView({ padding: 0.15, duration: 300 }));
+  }, [stopPlayback, fitView]);
+
+  // Resolve trail labels for the breadcrumb
+  const trailItems = playback.trail
+    .map((entry) => ({ id: entry.nodeId, title: diagram.screens.find((s) => s.id === entry.nodeId)?.title ?? entry.nodeId }));
 
   return (
     <div className="canvas-root relative h-full w-full bg-slate-950">
@@ -177,6 +252,8 @@ export function DiagramCanvas() {
         onPaneClick={onPaneClick}
         onNodeDragStop={onNodeDragStop}
         onConnect={onConnect}
+        onConnectEnd={onConnectEnd}
+        connectionMode={edgeConnectMode === "free" ? ConnectionMode.Loose : ConnectionMode.Strict}
 
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
@@ -206,7 +283,40 @@ export function DiagramCanvas() {
         />
       </ReactFlow>
 
-      {selection.kind !== "none" && <DetailPanel />}
+      {/* Playback chrome: exit button + breadcrumb */}
+      {playback.active && (
+        <>
+          <button
+            onClick={handleExitPlayback}
+            className="absolute top-4 right-4 z-50 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/90 border border-violet-500/40 text-violet-300 text-xs font-medium shadow-lg hover:bg-slate-800 hover:border-violet-400 transition-colors backdrop-blur"
+          >
+            <LogOut className="w-3.5 h-3.5" /> Salir del playback (Esc)
+          </button>
+
+          {trailItems.length > 0 && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1 max-w-[70vw] px-3 py-1.5 rounded-lg bg-slate-900/90 border border-slate-700 backdrop-blur shadow-lg overflow-x-auto">
+              {trailItems.map((item, idx) => (
+                <div key={`${item.id}-${idx}`} className="flex items-center gap-1 shrink-0">
+                  {idx > 0 && <ChevronRight className="w-3 h-3 text-slate-600" />}
+                  <button
+                    onClick={() => handleStepBack(item.id)}
+                    className={`text-[11px] px-1.5 py-0.5 rounded transition-colors ${
+                      idx === trailItems.length - 1
+                        ? "text-violet-300 font-semibold"
+                        : "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                    }`}
+                  >
+                    {item.title}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {selection.kind !== "none" && !playback.active && <DetailPanel />}
+      {playback.active && <VariablesPanel />}
       <SearchDialog />
     </div>
   );

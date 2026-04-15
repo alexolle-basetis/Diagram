@@ -2,6 +2,7 @@ import {
   Plus, Undo2, Redo2, Download, Upload, Image, PanelLeftClose, PanelLeftOpen,
   Search, AlertTriangle, CheckCircle2, Tag, Share2, Check, ArrowLeft,
   Cloud, CloudOff, Loader2, LogOut, Wifi, LayoutGrid, Sparkles, Sun, Moon, Spline,
+  BookOpen, Move, ArrowRightLeft,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { useDiagramStore } from "../store/useDiagramStore";
@@ -12,6 +13,7 @@ import { buildShareUrl } from "../utils/urlShare";
 import { renameDiagram } from "../lib/diagramService";
 import { isSupabaseConfigured } from "../lib/supabase";
 import { ShareDialog } from "./ShareDialog";
+import { OpenApiDialog } from "./OpenApiDialog";
 
 const isCloud = isSupabaseConfigured && window.location.hash !== "#local";
 
@@ -43,10 +45,15 @@ export function Toolbar({ showAiPanel, onToggleAiPanel }: { showAiPanel: boolean
   const setTheme = usePreferencesStore((s) => s.setTheme);
   const edgeStyle = usePreferencesStore((s) => s.edgeStyle);
   const setEdgeStyle = usePreferencesStore((s) => s.setEdgeStyle);
+  const edgeConnectMode = usePreferencesStore((s) => s.edgeConnectMode);
+  const setEdgeConnectMode = usePreferencesStore((s) => s.setEdgeConnectMode);
+  const openApi = useDiagramStore((s) => s.diagram.openApi);
+  const setOpenApiSpec = useDiagramStore((s) => s.setOpenApiSpec);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const [shared, setShared] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [openApiDialogOpen, setOpenApiDialogOpen] = useState(false);
 
   const progress = getProgress();
   const tags = getAllTags();
@@ -188,6 +195,26 @@ export function Toolbar({ showAiPanel, onToggleAiPanel }: { showAiPanel: boolean
         </select>
       </div>
 
+      {/* Edge connect mode (flow vs free) */}
+      <ToolbarButton
+        icon={edgeConnectMode === "free"
+          ? <Move className="w-4 h-4 text-violet-400" />
+          : <ArrowRightLeft className="w-4 h-4" />
+        }
+        tooltip={edgeConnectMode === "free"
+          ? "Modo libre: conecta desde cualquier lado (pulsa para cambiar a flow)"
+          : "Modo flow: izquierda → derecha (pulsa para cambiar a libre)"
+        }
+        onClick={() => setEdgeConnectMode(edgeConnectMode === "free" ? "flow" : "free")}
+      />
+
+      {/* OpenAPI spec (global) */}
+      <ToolbarButton
+        icon={<BookOpen className={`w-4 h-4 ${openApi ? "text-emerald-400" : ""}`} />}
+        tooltip={openApi ? `OpenAPI: ${openApi.title ?? "cargado"}` : "Cargar OpenAPI"}
+        onClick={() => setOpenApiDialogOpen(true)}
+      />
+
       {/* Theme toggle */}
       <ToolbarButton
         icon={theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
@@ -277,6 +304,16 @@ export function Toolbar({ showAiPanel, onToggleAiPanel }: { showAiPanel: boolean
 
       {shareDialogOpen && (
         <ShareDialog open={shareDialogOpen} onClose={() => setShareDialogOpen(false)} />
+      )}
+
+      {openApiDialogOpen && (
+        <OpenApiDialog
+          open={openApiDialogOpen}
+          onClose={() => setOpenApiDialogOpen(false)}
+          value={openApi}
+          onChange={setOpenApiSpec}
+          title="OpenAPI global del diagrama"
+        />
       )}
     </div>
   );

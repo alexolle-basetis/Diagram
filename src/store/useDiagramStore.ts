@@ -1,7 +1,25 @@
 import { create } from "zustand";
-import type { DiagramData, Screen, Action, ApiCall, SelectionType, ValidationError } from "../types/diagram";
+import type { DiagramData, Screen, Action, ApiCall, SelectionType, ValidationError, OpenApiRef, VarValue } from "../types/diagram";
 import { sampleDiagram } from "../data/sampleDiagram";
 import { validateDiagram } from "../utils/validation";
+import { initialVariableValues, applyEffects, type VarMap } from "../utils/variables";
+
+/**
+ * Estado del playback. `trail` guarda un snapshot de las variables en cada paso
+ * para que `stepBackPlayback` pueda restaurarlas correctamente.
+ */
+export interface PlaybackTrailEntry {
+  nodeId: string;
+  vars: VarMap;
+}
+
+export interface PlaybackState {
+  active: boolean;
+  nodeId: string | null;
+  trail: PlaybackTrailEntry[];
+  /** Valores actuales de las variables del diagrama durante el playback. */
+  variables: VarMap;
+}
 
 const STORAGE_KEY = "diagram-app-state";
 const MAX_HISTORY = 50;
@@ -97,6 +115,22 @@ interface DiagramStore {
   setSearchOpen: (open: boolean) => void;
   setSearchTerm: (term: string) => void;
   setFilterTag: (tag: string | null) => void;
+
+  // OpenAPI
+  setOpenApiSpec: (spec: OpenApiRef | null) => void;
+  setScreenOpenApi: (screenId: string, spec: OpenApiRef | null) => void;
+
+  // Playback
+  playback: PlaybackState;
+  startPlayback: (nodeId: string) => void;
+  /** `actionId` opcional: si se proporciona, se aplican sus efectos al avanzar. */
+  advancePlayback: (targetNodeId: string, actionId?: string) => void;
+  stepBackPlayback: (nodeId: string) => void;
+  stopPlayback: () => void;
+  /** Cambia manualmente el valor de una variable durante el playback (simulación). */
+  setPlaybackVariable: (name: string, value: VarValue) => void;
+  /** Restaura las variables a sus defaults (manteniéndose en el nodo actual). */
+  resetPlaybackVariables: () => void;
 
   // Validation
   validate: () => ValidationError[];
@@ -366,6 +400,111 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
   setSearchOpen: (open) => set({ searchOpen: open, searchTerm: open ? "" : get().searchTerm }),
   setSearchTerm: (term) => set({ searchTerm: term }),
   setFilterTag: (tag) => set({ filterTag: tag }),
+
+  // ── OpenAPI ─────────────────────────────────────────────────────
+  setOpenApiSpec: (spec) => {
+    set((s) => {
+      const newDiagram = { ...s.diagram, openApi: spec ?? undefined };
+      return commit(s, newDiagram) as DiagramStore;
+    });
+  },
+
+  setScreenOpenApi: (screenId, spec) => {
+    set((s) => {
+      const screens = s.diagram.screens.map((scr) =>
+        scr.id === screenId ? { ...scr, openApi: spec ?? undefined } : scr
+      );
+      return commit(s, { ...s.diagram, screens }) as DiagramStore;
+    });
+  },
+
+  // ── Playback ────────────────────────────────────────────────────
+  playback: { active: false, nodeId: null, trail: [], variables: {} },
+
+  startPlayback: (nodeId) => {
+    set((s) => {
+      const initialVars = initialVariableValues(s.diagram);
+      return {
+        playback: {
+          active: true,
+          nodeId,
+          trail: [{ nodeId, vars: initialVars }],
+          variables: initialVars,
+        },
+        selection: { kind: "none" },
+      };
+    });
+  },
+
+  advancePlayback: (targetNodeId, actionId) => {
+    set((s) => {
+      if (!s.playback.active) return s;
+      // Find the action (if provided) on the current node to apply its effects.
+      let nextVars = s.playback.variables;
+      if (actionId && s.playback.nodeId) {
+        const currentScreen = s.diagram.screens.find((sc) => sc.id === s.playback.nodeId);
+        const action = currentScreen?.actions.find((a) => a.id === actionId);
+        if (action?.effects && action.effects.length > 0) {
+          nextVars = applyEffects(action.effects, nextVars);
+        }
+      }
+      return {
+        playback: {
+          active: true,
+          nodeId: targetNodeId,
+          trail: [...s.playback.trail, { nodeId: targetNodeId, vars: nextVars }],
+          variables: nextVars,
+        },
+      };
+    });
+  },
+
+  stepBackPlayback: (nodeId) => {
+    set((s) => {
+      if (!s.playback.active) return s;
+      const idx = s.playback.trail.findIndex((t) => t.nodeId === nodeId);
+      if (idx === -1) return s;
+      const newTrail = s.playback.trail.slice(0, idx + 1);
+      return {
+        playback: {
+          active: true,
+          nodeId,
+          trail: newTrail,
+          variables: newTrail[newTrail.length - 1].vars,
+        },
+      };
+    });
+  },
+
+  stopPlayback: () => {
+    set({ playback: { active: false, nodeId: null, trail: [], variables: {} } });
+  },
+
+  setPlaybackVariable: (name, value) => {
+    set((s) => {
+      if (!s.playback.active) return s;
+      const nextVars = { ...s.playback.variables, [name]: value };
+      const trail = [...s.playback.trail];
+      // Mirror the change in the latest trail snapshot so step-back lands on the
+      // user's manually-edited state.
+      if (trail.length > 0) {
+        trail[trail.length - 1] = { ...trail[trail.length - 1], vars: nextVars };
+      }
+      return { playback: { ...s.playback, variables: nextVars, trail } };
+    });
+  },
+
+  resetPlaybackVariables: () => {
+    set((s) => {
+      if (!s.playback.active) return s;
+      const initial = initialVariableValues(s.diagram);
+      const trail = [...s.playback.trail];
+      if (trail.length > 0) {
+        trail[trail.length - 1] = { ...trail[trail.length - 1], vars: initial };
+      }
+      return { playback: { ...s.playback, variables: initial, trail } };
+    });
+  },
 
   // ── Validation ──────────────────────────────────────────────────
   validate: () => {

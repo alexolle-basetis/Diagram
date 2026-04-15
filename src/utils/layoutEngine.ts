@@ -1,9 +1,10 @@
 import type { Node, Edge } from "@xyflow/react";
-import type { DiagramData, ScreenStatus, ScreenColor, ScreenIcon } from "../types/diagram";
+import type { DiagramData, ScreenStatus, ScreenColor, ScreenIcon, NodeKind, CardViewMode } from "../types/diagram";
 import {
   Monitor, Smartphone, Layout, Home, User, Settings, Shield, Key,
   CreditCard, ShoppingCart, FileText, Mail, Bell, Search, Map as MapIcon, Camera,
   Database, Cloud, Terminal, Globe, Heart, Zap, Lock, LogIn, List, BarChart,
+  Server, Layers, Box,
   type LucideIcon,
 } from "lucide-react";
 
@@ -34,6 +35,19 @@ export const SCREEN_ICONS: Record<ScreenIcon, { icon: LucideIcon; label: string 
   "log-in": { icon: LogIn, label: "Login" },
   "list": { icon: List, label: "Lista" },
   "bar-chart": { icon: BarChart, label: "Gráfico" },
+  "server": { icon: Server, label: "Servidor" },
+  "layers": { icon: Layers, label: "Capas" },
+  "box": { icon: Box, label: "Caja" },
+};
+
+/** Defaults sugeridos (icon + color) cuando el usuario crea un nodo del tipo dado. */
+export const KIND_DEFAULTS: Record<NodeKind, { icon: ScreenIcon; color: ScreenColor; label: string }> = {
+  "screen":       { icon: "monitor",  color: "slate",   label: "Pantalla" },
+  "database":     { icon: "database", color: "emerald", label: "Base de datos" },
+  "external-api": { icon: "cloud",    color: "amber",   label: "API externa" },
+  "service":      { icon: "server",   color: "blue",    label: "Servicio" },
+  "queue":        { icon: "layers",   color: "violet",  label: "Cola / Topic" },
+  "user":         { icon: "user",     color: "rose",    label: "Usuario" },
 };
 
 const NODE_WIDTH = 280;
@@ -44,13 +58,23 @@ const V_GAP = 60;
 
 export interface ScreenNodeData {
   screenId: string;
+  kind: NodeKind;
   title: string;
   description: string;
   status: ScreenStatus;
   color: ScreenColor;
   icon: ScreenIcon;
   tags: string[];
-  actions: { id: string; label: string; hasApi: boolean; hasNote: boolean }[];
+  viewMode: CardViewMode;
+  imageUrl?: string;
+  actions: {
+    id: string;
+    label: string;
+    hasApi: boolean;
+    hasNote: boolean;
+    hasConditions: boolean;
+    hasEffects: boolean;
+  }[];
   [key: string]: unknown;
 }
 
@@ -153,23 +177,31 @@ export function buildFlowElements(
       const x = saved?.x ?? col * (NODE_WIDTH + H_GAP) + 40;
       const y = saved?.y ?? row * (nodeHeight + V_GAP) + 40;
 
+      const kind = (screen.kind ?? "screen") as NodeKind;
+      const defaults = KIND_DEFAULTS[kind];
+
       nodes.push({
         id: screen.id,
         type: "screenNode",
         position: { x, y },
         data: {
           screenId: screen.id,
+          kind,
           title: screen.title,
           description: screen.description,
           status: screen.status ?? "pending",
-          color: screen.color ?? "slate",
-          icon: screen.icon ?? "monitor",
+          color: screen.color ?? defaults.color,
+          icon: screen.icon ?? defaults.icon,
           tags: screen.tags ?? [],
+          viewMode: screen.viewMode ?? "actions",
+          imageUrl: screen.imageUrl,
           actions: screen.actions.map((a) => ({
             id: a.id,
             label: a.label,
             hasApi: apiByAction.has(a.id),
             hasNote: !!a.note,
+            hasConditions: (a.conditions?.length ?? 0) > 0,
+            hasEffects: (a.effects?.length ?? 0) > 0,
           })),
         } satisfies ScreenNodeData,
       });

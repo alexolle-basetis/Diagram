@@ -95,11 +95,14 @@ function App() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Check URL for ?id= param (Supabase diagram)
+  // Only set cloud diagram when the URL ID actually changes, so that Supabase
+  // token refreshes (which re-fire onAuthStateChange) don't wipe the stored name.
   useEffect(() => {
     if (localMode) return;
     const params = new URLSearchParams(window.location.search);
     const id = params.get("id");
-    if (id && authUser) {
+    const currentId = useDiagramStore.getState().cloudDiagramId;
+    if (id && authUser && id !== currentId) {
       setCloudDiagram(id, "");
     }
   }, [authUser, setCloudDiagram]);
