@@ -71,10 +71,13 @@ export function ScreenNode({ data, selected, id }: NodeProps<ScreenNodeType>) {
   const hasImage = !!data.imageUrl;
   const screenshotMode = data.viewMode === "screenshot" && hasImage;
 
+  const isPlaybackCurrent = playback.active && playback.nodeId === id;
+  const isOnTrail = playback.active && playback.trail.some((t) => t.nodeId === id);
   const dimmedByTag = filterTag ? !data.tags.includes(filterTag) : false;
-  const dimmedByPlayback = playback.active && playback.nodeId !== id;
+  const dimmedByPlayback = playback.active && !isPlaybackCurrent;
   const dimmed = dimmedByTag || dimmedByPlayback;
-  const isPlaybackActive = playback.active && playback.nodeId === id;
+  // During playback: current node full, trail nodes faintly visible, rest nearly invisible
+  const playbackOpacity = isPlaybackCurrent ? "opacity-100" : isOnTrail ? "opacity-20" : "opacity-[0.08]";
 
   const toggleViewMode = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -102,9 +105,9 @@ export function ScreenNode({ data, selected, id }: NodeProps<ScreenNodeType>) {
       className={`
         screen-node w-[280px] border shadow-lg transition-all relative group/node
         ${shell.outer}
-        ${selected ? "border-violet-500 shadow-violet-500/25 ring-1 ring-violet-500/30" : colorStyle.border}
-        ${isPlaybackActive ? "ring-2 ring-violet-400 shadow-violet-500/40" : ""}
-        ${dimmed ? "opacity-25" : "opacity-100"}
+        ${selected && !playback.active ? "border-violet-500 shadow-violet-500/25 ring-1 ring-violet-500/30" : colorStyle.border}
+        ${isPlaybackCurrent ? "ring-2 ring-violet-400 shadow-violet-500/40 border-violet-500" : ""}
+        ${playback.active ? playbackOpacity : dimmed ? "opacity-25" : "opacity-100"}
         bg-slate-900
       `}
       style={isPill ? { minHeight: 72 } : undefined}
@@ -115,16 +118,15 @@ export function ScreenNode({ data, selected, id }: NodeProps<ScreenNodeType>) {
         </span>
       )}
 
-      {/* Side handles — both source and target on each side. Layout engine picks
-          the handle pair per edge based on relative position. Active sides are
-          slightly larger and violet; inactive sides stay present but subtle so
-          user-dragged / custom-routed edges keep working. */}
+      {/* Side handles — hidden during playback. */}
       {SIDES.map((side) => {
         const isActive = activeSides.includes(side);
         const base = "!border-slate-800 !border-2 transition-all";
-        const activeCls = isActive
-          ? "!w-3 !h-3 !bg-violet-500/70 hover:!bg-violet-400"
-          : "!w-2 !h-2 !bg-slate-600/50 opacity-40 group-hover/node:opacity-100";
+        const activeCls = playback.active
+          ? "!w-0 !h-0 !opacity-0 !pointer-events-none"
+          : isActive
+            ? "!w-3 !h-3 !bg-violet-500/70 hover:!bg-violet-400"
+            : "!w-2 !h-2 !bg-slate-600/50 opacity-40 group-hover/node:opacity-100";
         return (
           <div key={side}>
             <Handle
@@ -288,7 +290,7 @@ export function ScreenNode({ data, selected, id }: NodeProps<ScreenNodeType>) {
       {!playback.active && (
         <button
           onClick={onPlayClick}
-          className="nodrag absolute bottom-1 right-1 p-1 rounded-full bg-violet-500/60 text-white hover:bg-violet-400 hover:scale-110 transition-all z-10 shadow-lg"
+          className="nodrag absolute bottom-1 right-1 p-1 rounded-full bg-violet-500/60 text-white opacity-0 group-hover/node:opacity-100 hover:bg-violet-400 hover:scale-110 transition-all z-10 shadow-lg"
           title="Iniciar playback desde aquí"
         >
           <Play className="w-3 h-3 fill-current" />

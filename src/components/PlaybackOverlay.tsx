@@ -1,12 +1,12 @@
 import { useMemo, useEffect, useState } from "react";
 import { useReactFlow, useViewport } from "@xyflow/react";
 import { useDiagramStore } from "../store/useDiagramStore";
-import { ArrowRight, Globe, MessageSquare, AlertCircle, LogOut, Lock, Sparkles } from "lucide-react";
-import { unmetConditions, formatCondition, formatEffect } from "../utils/variables";
+import { ArrowRight, Lock, Undo2 } from "lucide-react";
+import { unmetConditions, formatCondition } from "../utils/variables";
 
-const OVERLAY_WIDTH = 340;
+const OVERLAY_WIDTH = 300;
 /** Approx max overlay height — used to decide placement. Real clamp below. */
-const OVERLAY_MAX_HEIGHT = 360;
+const OVERLAY_MAX_HEIGHT = 340;
 const MARGIN = 12;
 
 /**
@@ -21,11 +21,11 @@ const MARGIN = 12;
  */
 export function PlaybackOverlay({ nodeId }: { nodeId: string }) {
   const screen = useDiagramStore((s) => s.getScreen(nodeId));
-  const getApiCall = useDiagramStore((s) => s.getApiCall);
   const getScreen = useDiagramStore((s) => s.getScreen);
   const variables = useDiagramStore((s) => s.playback.variables);
+  const trail = useDiagramStore((s) => s.playback.trail);
   const advancePlayback = useDiagramStore((s) => s.advancePlayback);
-  const stopPlayback = useDiagramStore((s) => s.stopPlayback);
+  const stepBackPlayback = useDiagramStore((s) => s.stepBackPlayback);
   const { setCenter, getNode, getViewport } = useReactFlow();
   // Subscribe to viewport transform so the overlay re-renders when the user
   // pans or zooms. Keeps the overlay anchored to the active node.
@@ -60,7 +60,7 @@ export function PlaybackOverlay({ nodeId }: { nodeId: string }) {
     const spaceBelow = vp.h - nodeBottom - MARGIN;
     const spaceAbove = nodeTop - MARGIN;
 
-    // Preference order: right → left → below → above
+    // Preference order: right → left → bottom → top
     let side: "right" | "left" | "below" | "above" = "below";
     if (spaceRight >= OVERLAY_WIDTH) side = "right";
     else if (spaceLeft >= OVERLAY_WIDTH) side = "left";
@@ -106,24 +106,37 @@ export function PlaybackOverlay({ nodeId }: { nodeId: string }) {
     return { left, top, maxH, side };
   }, [getNode, nodeId, viewport, vp]);
 
+  // Can we go back? Only if trail has more than 1 entry.
+  const canGoBack = trail.length > 1;
+  const previousEntry = canGoBack ? trail[trail.length - 2] : null;
+
   if (!screen || !placement) return null;
 
-  const handleChoose = (targetScreenId: string, actionId: string) => {
+  const panToNode = (targetScreenId: string) => {
     const targetNode = getNode(targetScreenId);
     if (targetNode) {
       const x = targetNode.position.x + (targetNode.width ?? 280) / 2;
       const y = targetNode.position.y + (targetNode.measured?.height ?? targetNode.height ?? 160) / 2;
-      // Pan only — keep current zoom — short duration so it feels snappy.
       const { zoom } = getViewport();
       setCenter(x, y, { duration: 250, zoom });
     }
+  };
+
+  const handleChoose = (targetScreenId: string, actionId: string) => {
+    panToNode(targetScreenId);
     // Small defer so the pan starts before the overlay re-renders on the next node.
     setTimeout(() => advancePlayback(targetScreenId, actionId), 30);
   };
 
+  const handleBack = () => {
+    if (!previousEntry) return;
+    panToNode(previousEntry.nodeId);
+    setTimeout(() => stepBackPlayback(previousEntry.nodeId), 30);
+  };
+
   return (
     <div
-      className="nodrag fixed z-40 bg-slate-900/95 backdrop-blur border border-violet-500/40 rounded-xl shadow-2xl shadow-violet-500/10 flex flex-col overflow-hidden"
+      className="nodrag fixed z-40 bg-slate-900/95 backdrop-blur border border-violet-500/30 rounded-xl shadow-2xl shadow-violet-500/10 flex flex-col overflow-hidden"
       style={{
         left: placement.left,
         top: placement.top,
@@ -131,104 +144,76 @@ export function PlaybackOverlay({ nodeId }: { nodeId: string }) {
         maxHeight: placement.maxH,
       }}
     >
-      <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700/60 bg-slate-800/40 shrink-0">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-300 truncate">
-          ¿Qué hacer en {screen.title}?
+      {/* Header */}
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-700/60 bg-slate-800/40 shrink-0">
+        <span className="text-[11px] font-semibold text-violet-300 truncate flex-1">
+          {screen.title}
         </span>
-        <button
-          onClick={stopPlayback}
-          className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-100 transition-colors shrink-0"
-          title="Salir del playback (Esc)"
-        >
-          <LogOut className="w-3 h-3" /> Salir
-        </button>
+        <span className="text-[9px] text-slate-500 uppercase tracking-wider shrink-0">
+          {screen.actions.length} {screen.actions.length === 1 ? "acción" : "acciones"}
+        </span>
       </div>
 
-      {screen.actions.length === 0 ? (
-        <div className="text-xs text-slate-500 italic px-3 py-4 text-center">
-          Este nodo no tiene acciones salientes. Pulsa Esc para salir.
-        </div>
-      ) : (
-        <div className="p-2 space-y-1.5 overflow-y-auto">
-          {screen.actions.map((action) => {
-            const api = getApiCall(action.id);
-            const targetTitle = getScreen(action.targetScreen)?.title ?? "?";
-            const unmet = unmetConditions(action, variables);
-            const blocked = unmet.length > 0;
-            const blockedTitle = blocked
-              ? "Bloqueada · Requiere: " + unmet.map(formatCondition).join(" · ")
-              : undefined;
+      {/* Action list */}
+      <div className="p-1.5 space-y-1 overflow-y-auto flex-1">
+        {screen.actions.map((action) => {
+          const targetTitle = getScreen(action.targetScreen)?.title ?? "?";
+          const unmet = unmetConditions(action, variables);
+          const blocked = unmet.length > 0;
 
-            return (
-              <div key={action.id} className="space-y-1">
-                <button
-                  onClick={() => !blocked && handleChoose(action.targetScreen, action.id)}
-                  disabled={blocked}
-                  title={blockedTitle}
-                  className={`group w-full flex items-start gap-2 px-2 py-1.5 rounded-lg border text-left transition-all ${
-                    blocked
-                      ? "bg-slate-800/40 border-slate-700/40 opacity-60 cursor-not-allowed"
-                      : "bg-slate-800 hover:bg-violet-600/20 border-slate-700 hover:border-violet-500/60"
-                  }`}
-                >
-                  {blocked
-                    ? <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0 text-slate-500" />
-                    : <ArrowRight className="w-3.5 h-3.5 mt-0.5 shrink-0 text-violet-400 group-hover:translate-x-0.5 transition-transform" />
-                  }
-                  <div className="flex-1 min-w-0">
-                    <div className={`text-xs font-medium truncate ${blocked ? "text-slate-400" : "text-slate-100"}`}>
-                      {action.label}
-                    </div>
-                    <div className="text-[10px] text-slate-500 truncate">→ {targetTitle}</div>
-
-                    {blocked && (
-                      <div className="mt-1 space-y-0.5">
-                        {unmet.map((c, i) => (
-                          <div key={i} className="flex items-center gap-1 text-[10px] text-violet-300/80">
-                            <Lock className="w-2.5 h-2.5" />
-                            <span className="font-mono truncate">{formatCondition(c)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {!blocked && action.effects && action.effects.length > 0 && (
-                      <div className="flex items-center gap-1 mt-0.5 text-[10px] text-fuchsia-300/80">
-                        <Sparkles className="w-2.5 h-2.5" />
-                        <span className="font-mono truncate">{action.effects.map(formatEffect).join(" · ")}</span>
-                      </div>
-                    )}
-
-                    {api && !blocked && (
-                      <div className="flex items-center gap-1 mt-0.5 text-[10px] font-mono text-amber-300/90">
-                        <Globe className="w-2.5 h-2.5" />
-                        <span className="font-semibold">{api.method}</span>
-                        <span className="truncate text-amber-400/70">{api.endpoint}</span>
-                      </div>
-                    )}
-                    {action.note && !blocked && (
-                      <div className="flex items-center gap-1 mt-0.5 text-[10px] text-sky-300/80">
-                        <MessageSquare className="w-2.5 h-2.5" />
-                        <span className="truncate italic">{action.note}</span>
-                      </div>
-                    )}
-                  </div>
-                </button>
-
-                {action.errorTargetScreen && !blocked && (
-                  <button
-                    onClick={() => handleChoose(action.errorTargetScreen!, action.id)}
-                    className="w-full flex items-center gap-2 px-2 py-1 rounded-lg bg-red-900/15 hover:bg-red-900/30 border border-red-500/30 transition-colors text-left"
-                  >
-                    <AlertCircle className="w-3 h-3 shrink-0 text-red-400" />
-                    <span className="text-[10px] text-red-300 truncate">
-                      Error → {getScreen(action.errorTargetScreen)?.title ?? "?"}
-                    </span>
-                  </button>
+          return (
+            <button
+              key={action.id}
+              onClick={() => !blocked && handleChoose(action.targetScreen, action.id)}
+              disabled={blocked}
+              title={blocked ? "Requiere: " + unmet.map(formatCondition).join(", ") : undefined}
+              className={`group w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${
+                blocked
+                  ? "opacity-40 cursor-not-allowed"
+                  : "hover:bg-violet-600/20 hover:border-violet-500/40"
+              }`}
+            >
+              {blocked
+                ? <Lock className="w-3.5 h-3.5 shrink-0 text-slate-500" />
+                : <ArrowRight className="w-3.5 h-3.5 shrink-0 text-violet-400 group-hover:translate-x-0.5 transition-transform" />
+              }
+              <div className="flex-1 min-w-0">
+                <div className={`text-xs font-medium truncate ${blocked ? "text-slate-500" : "text-slate-100"}`}>
+                  {action.label}
+                </div>
+                {action.note && (
+                  <div className="text-[10px] text-slate-500 truncate mt-0.5">{action.note}</div>
                 )}
               </div>
-            );
-          })}
+              {!blocked && (
+                <span className="text-[10px] text-slate-500 truncate max-w-[80px] shrink-0">
+                  {targetTitle}
+                </span>
+              )}
+            </button>
+          );
+        })}
+
+        {/* No actions: show back or info */}
+        {screen.actions.length === 0 && (
+          <div className="text-center py-3">
+            <p className="text-[11px] text-slate-500 mb-2">Sin acciones salientes</p>
+          </div>
+        )}
+      </div>
+
+      {/* Back button — always visible if we can go back */}
+      {canGoBack && (
+        <div className="border-t border-slate-700/60 px-1.5 py-1.5 shrink-0">
+          <button
+            onClick={handleBack}
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left hover:bg-slate-800 transition-colors"
+          >
+            <Undo2 className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-[11px] text-slate-400">
+              Volver a {getScreen(previousEntry!.nodeId)?.title ?? "anterior"}
+            </span>
+          </button>
         </div>
       )}
     </div>

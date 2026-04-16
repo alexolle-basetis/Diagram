@@ -58,9 +58,10 @@ export function ApiEdge({
   const showEdgeLabels = usePreferencesStore((s) => s.showEdgeLabels);
   const isLight = theme === "light";
 
-  // Highlight when the user hovers an action row in a card OR when the action is in playback path
+  const playbackActive = useDiagramStore((s) => s.playback.active);
   const hoveredActionId = useDiagramStore((s) => s.hoveredActionId);
   const isHovered = hoveredActionId !== null && data?.actionId === hoveredActionId;
+  const isOnTrail = !!(data as ApiEdgeData & { isOnTrail?: boolean })?.isOnTrail;
   const isHighlighted = !!selected || isHovered;
 
   const hasApi = data?.hasApi ?? false;
@@ -68,21 +69,30 @@ export function ApiEdge({
   const hasConditions = data?.hasConditions ?? false;
   const hasEffects = data?.hasEffects ?? false;
   const isError = data?.isErrorPath ?? false;
-  const hasLabel = showEdgeLabels && (hasApi || hasNote || hasConditions || hasEffects);
 
-  const strokeColor = isHighlighted
+  // During playback: trail edges glow violet, others nearly invisible
+  const playbackDimmed = playbackActive && !isOnTrail;
+
+  const strokeColor = isOnTrail
     ? "#8b5cf6"
-    : isError
-      ? "#ef4444"
-      : hasConditions
-        ? "#a78bfa" // condition violet — distinct from selected
-        : hasApi
-          ? "#f59e0b"
-          : hasNote
-            ? "#38bdf8"
-            : isLight ? "#94a3b8" : "#475569";
+    : isHighlighted
+      ? "#8b5cf6"
+      : playbackDimmed
+        ? (isLight ? "#e2e8f0" : "#1e293b")
+        : isError
+          ? "#ef4444"
+          : hasConditions
+            ? "#a78bfa"
+            : hasApi
+              ? "#f59e0b"
+              : hasNote
+                ? "#38bdf8"
+                : isLight ? "#94a3b8" : "#475569";
 
-  const baseWidth = isHighlighted ? 3 : hasApi ? 2 : hasConditions ? 2 : hasNote ? 1.5 : 1.5;
+  const baseWidth = isOnTrail ? 2.5 : isHighlighted ? 3 : playbackDimmed ? 1 : hasApi ? 2 : hasConditions ? 2 : hasNote ? 1.5 : 1.5;
+
+  // Hide labels during playback for cleanliness (except trail edges)
+  const hasLabel = showEdgeLabels && !playbackDimmed && (hasApi || hasNote || hasConditions || hasEffects);
 
   return (
     <>
@@ -92,9 +102,10 @@ export function ApiEdge({
         style={{
           stroke: strokeColor,
           strokeWidth: baseWidth,
-          strokeDasharray: isError ? "8 4" : (hasApi || hasNote || hasConditions) ? undefined : "6 3",
-          filter: isHovered && !selected ? "drop-shadow(0 0 4px #8b5cf6)" : undefined,
-          transition: "stroke 0.15s, stroke-width 0.15s, filter 0.15s",
+          strokeDasharray: isError ? "8 4" : isOnTrail ? undefined : (hasApi || hasNote || hasConditions) ? undefined : "6 3",
+          filter: isOnTrail ? "drop-shadow(0 0 6px rgba(139, 92, 246, 0.4))" : isHovered && !selected ? "drop-shadow(0 0 4px #8b5cf6)" : undefined,
+          opacity: playbackDimmed ? 0.15 : 1,
+          transition: "stroke 0.15s, stroke-width 0.15s, filter 0.15s, opacity 0.15s",
         }}
       />
       {hasLabel && (
