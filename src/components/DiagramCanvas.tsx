@@ -355,6 +355,16 @@ export function DiagramCanvas() {
       {isPlaybackActive && <VariablesPanel />}
       {isPlaybackActive && playback.nodeId && <PlaybackOverlay nodeId={playback.nodeId} />}
       <SearchDialog />
+
+      {/* Version badge */}
+      <div
+        className={`absolute bottom-2 left-2 z-10 text-[10px] px-1.5 py-0.5 rounded select-none pointer-events-none ${
+          isLight ? "text-slate-400/60" : "text-slate-600/60"
+        }`}
+      >
+        v{__APP_VERSION__}
+        <span className="ml-1 opacity-60">({__BUILD_HASH__})</span>
+      </div>
     </div>
   );
 }
